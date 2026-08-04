@@ -30,6 +30,7 @@ package gov.nasa.worldwindx.examples;
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.util.WWUtil;
 import gov.nasa.worldwindx.examples.cache.CoordinateCacheDialog;
+import gov.nasa.worldwindx.examples.cache.MapSectorCacheTool;
 import gov.nasa.worldwindx.examples.cache.SectorCacheController;
 
 import javax.swing.*;
@@ -40,12 +41,15 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 
 /**
- * Demonstrates manual coordinate entry for bulk-caching a geographic sector.
+ * Demonstrates caching a geographic sector either by typing coordinates or by dragging a rectangle on the globe.
  * <p>
- * A button in the lower-left of the WorldWindow opens a dialog where the user types min/max latitude and longitude.
- * The entered sector is previewed on the globe and downloaded into the WorldWind cache through
- * {@link SectorCacheController}. Interactive map selection can later reuse the same controller.
+ * Two buttons in the lower-left of the WorldWindow provide:
  * </p>
+ * <ul>
+ * <li>Manual coordinate entry through {@link CoordinateCacheDialog}</li>
+ * <li>Interactive map selection through {@link MapSectorCacheTool}</li>
+ * </ul>
+ * Both paths download through {@link SectorCacheController}.
  *
  * @author Cursor Agent
  */
@@ -55,13 +59,24 @@ public class CoordinateCacheDownload extends ApplicationTemplate
     {
         protected SectorCacheController cacheController;
         protected CoordinateCacheDialog cacheDialog;
-        protected JButton cacheButton;
+        protected MapSectorCacheTool mapCacheTool;
+        protected JButton coordinateButton;
+        protected JButton mapButton;
+        protected JPanel buttonStack;
 
         public AppFrame()
         {
             this.cacheController = new SectorCacheController(this.getWwd());
             this.cacheDialog = new CoordinateCacheDialog(this, this.cacheController);
-            this.installBottomLeftCacheButton();
+            this.mapCacheTool = new MapSectorCacheTool(this, this.cacheController);
+            this.mapCacheTool.setSelectionStateListener(new Runnable()
+            {
+                public void run()
+                {
+                    updateMapButtonLabel();
+                }
+            });
+            this.installBottomLeftCacheButtons();
 
             Dimension size = new Dimension(1200, 800);
             this.setPreferredSize(size);
@@ -70,37 +85,52 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         }
 
         /**
-         * Places a non-blocking glass-pane button over the lower-left corner of the WorldWindow.
-         * Clicks outside the button pass through to the globe and other UI.
+         * Places non-blocking glass-pane buttons over the lower-left corner of the WorldWindow.
+         * Clicks outside the buttons pass through to the globe and other UI.
          */
-        protected void installBottomLeftCacheButton()
+        protected void installBottomLeftCacheButtons()
         {
-            this.cacheButton = new JButton("Cache by Coordinates");
-            this.cacheButton.setToolTipText("Enter coordinates and download the area into the local cache");
-            this.cacheButton.setFocusable(false);
-            this.cacheButton.addActionListener(new ActionListener()
+            this.coordinateButton = new JButton("Cache by Coordinates");
+            this.coordinateButton.setToolTipText("Enter coordinates and download the area into the local cache");
+            this.coordinateButton.setFocusable(false);
+            this.coordinateButton.addActionListener(new ActionListener()
             {
                 public void actionPerformed(ActionEvent e)
                 {
-                    openCacheDialog();
+                    openCoordinateDialog();
                 }
             });
+
+            this.mapButton = new JButton("Cache from Map");
+            this.mapButton.setToolTipText("Press, then drag on the globe to select an area to download");
+            this.mapButton.setFocusable(false);
+            this.mapButton.addActionListener(new ActionListener()
+            {
+                public void actionPerformed(ActionEvent e)
+                {
+                    mapCacheTool.toggleSelection();
+                }
+            });
+
+            this.buttonStack = new JPanel();
+            this.buttonStack.setOpaque(false);
+            this.buttonStack.setLayout(new BoxLayout(this.buttonStack, BoxLayout.Y_AXIS));
+            this.coordinateButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+            this.mapButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+            this.buttonStack.add(this.coordinateButton);
+            this.buttonStack.add(Box.createVerticalStrut(6));
+            this.buttonStack.add(this.mapButton);
 
             final JPanel glass = new JPanel(null)
             {
                 @Override
                 public boolean contains(int x, int y)
                 {
-                    if (cacheButton == null || !cacheButton.isShowing())
-                    {
-                        return false;
-                    }
-                    Point p = SwingUtilities.convertPoint(this, new Point(x, y), cacheButton);
-                    return cacheButton.contains(p);
+                    return isInsideButtonStack(this, x, y);
                 }
             };
             glass.setOpaque(false);
-            glass.add(this.cacheButton);
+            glass.add(this.buttonStack);
 
             this.setGlassPane(glass);
             glass.setVisible(true);
@@ -110,17 +140,17 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             {
                 public void componentResized(ComponentEvent e)
                 {
-                    repositionCacheButton(glass, worldWindow);
+                    repositionCacheButtons(glass, worldWindow);
                 }
 
                 public void componentMoved(ComponentEvent e)
                 {
-                    repositionCacheButton(glass, worldWindow);
+                    repositionCacheButtons(glass, worldWindow);
                 }
 
                 public void componentShown(ComponentEvent e)
                 {
-                    repositionCacheButton(glass, worldWindow);
+                    repositionCacheButtons(glass, worldWindow);
                 }
             };
             worldWindow.addComponentListener(repositionListener);
@@ -131,36 +161,70 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             {
                 public void run()
                 {
-                    repositionCacheButton(glass, worldWindow);
+                    repositionCacheButtons(glass, worldWindow);
                 }
             });
         }
 
-        protected void repositionCacheButton(JPanel glass, Component worldWindow)
+        protected boolean isInsideButtonStack(Component glass, int x, int y)
         {
-            if (glass == null || this.cacheButton == null || worldWindow == null || !worldWindow.isShowing())
+            if (this.buttonStack == null || !this.buttonStack.isShowing())
+            {
+                return false;
+            }
+            Point p = SwingUtilities.convertPoint(glass, new Point(x, y), this.buttonStack);
+            return this.buttonStack.contains(p);
+        }
+
+        protected void repositionCacheButtons(JPanel glass, Component worldWindow)
+        {
+            if (glass == null || this.buttonStack == null || worldWindow == null || !worldWindow.isShowing())
             {
                 return;
             }
 
-            Dimension buttonSize = this.cacheButton.getPreferredSize();
+            Dimension stackSize = this.buttonStack.getPreferredSize();
             Point worldWindowOrigin = SwingUtilities.convertPoint(worldWindow.getParent(),
                 worldWindow.getLocation(), glass);
 
-            // Keep the button in the WorldWindow's lower-left corner, above the on-canvas view controls.
+            // Keep the buttons in the WorldWindow's lower-left corner, above the on-canvas view controls.
             int margin = 12;
             int liftAboveViewControls = 96;
             int x = worldWindowOrigin.x + margin;
-            int y = worldWindowOrigin.y + worldWindow.getHeight() - buttonSize.height - margin - liftAboveViewControls;
+            int y = worldWindowOrigin.y + worldWindow.getHeight() - stackSize.height - margin - liftAboveViewControls;
 
             y = Math.max(worldWindowOrigin.y + margin, y);
-            this.cacheButton.setBounds(x, y, buttonSize.width, buttonSize.height);
+            this.buttonStack.setBounds(x, y, stackSize.width, stackSize.height);
             glass.revalidate();
             glass.repaint();
         }
 
-        protected void openCacheDialog()
+        protected void updateMapButtonLabel()
         {
+            if (this.mapButton == null || this.mapCacheTool == null)
+            {
+                return;
+            }
+
+            if (this.mapCacheTool.isSelecting())
+            {
+                this.mapButton.setText("Cancel Map Selection");
+                this.mapButton.setToolTipText("Cancel interactive area selection on the globe");
+            }
+            else
+            {
+                this.mapButton.setText("Cache from Map");
+                this.mapButton.setToolTipText("Press, then drag on the globe to select an area to download");
+            }
+        }
+
+        protected void openCoordinateDialog()
+        {
+            if (this.mapCacheTool.isSelecting())
+            {
+                this.mapCacheTool.cancelSelection();
+            }
+
             if (!this.cacheDialog.isVisible())
             {
                 this.cacheDialog.setLocationRelativeTo(this);
