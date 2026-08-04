@@ -33,7 +33,7 @@
 #
 if [ $# -lt 1 ]
 then
-  WWDEMO=gov.nasa.worldwindx.examples.ApplicationTemplate
+  WWDEMO=gov.nasa.worldwindx.examples.CoordinateCacheDownload
 else
   WWDEMO=$*
 fi

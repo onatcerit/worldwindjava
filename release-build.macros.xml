@@ -110,7 +110,7 @@
             <jar jarfile="@{destdir}/worldwindx.jar">
                 <manifest>
                     <attribute name="Class-Path" value="worldwind.jar"/>
-                    <attribute name="Main-Class" value="gov.nasa.worldwindx.examples.ApplicationTemplate"/>
+                    <attribute name="Main-Class" value="gov.nasa.worldwindx.examples.CoordinateCacheDownload"/>
                     <attribute name="Permissions" value="all-permissions"/>
                 </manifest>
                 <fileset dir="@{classdir}">

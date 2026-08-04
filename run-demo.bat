@@ -26,7 +26,7 @@ REM NASA World Wind Java (WWJ)  can be found in the WorldWindJava-v2.2 3rd-party
 REM notices and licenses PDF found in code directory.
 
 REM Default to the ApplicationTemplate example if a class name is not provided
-IF "%1"=="" (SET WWDEMO=gov.nasa.worldwindx.examples.ApplicationTemplate) ELSE (SET WWDEMO=%*)
+IF "%1"=="" (SET WWDEMO=gov.nasa.worldwindx.examples.CoordinateCacheDownload) ELSE (SET WWDEMO=%*)
 
 REM Run a WorldWind Demo
 @echo Running %WWDEMO%

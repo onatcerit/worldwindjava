@@ -303,6 +303,7 @@ public class CoordinateCacheDownload extends ApplicationTemplate
 
     public static void main(String[] args)
     {
-        ApplicationTemplate.start("WorldWind Coordinate Cache Download", AppFrame.class);
+        // Same window title as ApplicationTemplate so this is the default World Wind Application.
+        ApplicationTemplate.start("WorldWind Application", AppFrame.class);
     }
 }
