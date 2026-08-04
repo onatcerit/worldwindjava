@@ -30,6 +30,7 @@ package gov.nasa.worldwindx.examples;
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.util.WWUtil;
 import gov.nasa.worldwindx.examples.cache.CoordinateCacheDialog;
+import gov.nasa.worldwindx.examples.cache.DistanceMeasureTool;
 import gov.nasa.worldwindx.examples.cache.MapSectorCacheTool;
 import gov.nasa.worldwindx.examples.cache.SectorCacheController;
 
@@ -41,15 +42,15 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 
 /**
- * Demonstrates caching a geographic sector either by typing coordinates or by dragging a rectangle on the globe.
+ * Demonstrates sector cache download and Google Maps-style distance measuring.
  * <p>
- * Two buttons in the lower-left of the WorldWindow provide:
+ * Lower-left buttons provide:
  * </p>
  * <ul>
  * <li>Manual coordinate entry through {@link CoordinateCacheDialog}</li>
  * <li>Interactive map selection through {@link MapSectorCacheTool}</li>
+ * <li>Distance measuring through {@link DistanceMeasureTool}</li>
  * </ul>
- * Both paths download through {@link SectorCacheController}.
  *
  * @author Cursor Agent
  */
@@ -60,8 +61,10 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         protected SectorCacheController cacheController;
         protected CoordinateCacheDialog cacheDialog;
         protected MapSectorCacheTool mapCacheTool;
+        protected DistanceMeasureTool distanceMeasureTool;
         protected JButton coordinateButton;
         protected JButton mapButton;
+        protected JButton measureButton;
         protected JPanel buttonStack;
 
         public AppFrame()
@@ -74,6 +77,14 @@ public class CoordinateCacheDownload extends ApplicationTemplate
                 public void run()
                 {
                     updateMapButtonLabel();
+                }
+            });
+            this.distanceMeasureTool = new DistanceMeasureTool(this.getWwd());
+            this.distanceMeasureTool.setArmedStateListener(new Runnable()
+            {
+                public void run()
+                {
+                    updateMeasureButtonLabel();
                 }
             });
             this.installBottomLeftCacheButtons();
@@ -108,7 +119,18 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             {
                 public void actionPerformed(ActionEvent e)
                 {
-                    mapCacheTool.toggleSelection();
+                    toggleMapSelection();
+                }
+            });
+
+            this.measureButton = new JButton("Measure Distance");
+            this.measureButton.setToolTipText("Press, then drag on the globe to measure distance from the start point");
+            this.measureButton.setFocusable(false);
+            this.measureButton.addActionListener(new ActionListener()
+            {
+                public void actionPerformed(ActionEvent e)
+                {
+                    toggleDistanceMeasure();
                 }
             });
 
@@ -117,9 +139,12 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             this.buttonStack.setLayout(new BoxLayout(this.buttonStack, BoxLayout.Y_AXIS));
             this.coordinateButton.setAlignmentX(Component.LEFT_ALIGNMENT);
             this.mapButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+            this.measureButton.setAlignmentX(Component.LEFT_ALIGNMENT);
             this.buttonStack.add(this.coordinateButton);
             this.buttonStack.add(Box.createVerticalStrut(6));
             this.buttonStack.add(this.mapButton);
+            this.buttonStack.add(Box.createVerticalStrut(6));
+            this.buttonStack.add(this.measureButton);
 
             final JPanel glass = new JPanel(null)
             {
@@ -199,6 +224,24 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             glass.repaint();
         }
 
+        protected void toggleMapSelection()
+        {
+            if (!this.mapCacheTool.isSelecting() && this.distanceMeasureTool.isArmed())
+            {
+                this.distanceMeasureTool.setArmed(false);
+            }
+            this.mapCacheTool.toggleSelection();
+        }
+
+        protected void toggleDistanceMeasure()
+        {
+            if (!this.distanceMeasureTool.isArmed() && this.mapCacheTool.isSelecting())
+            {
+                this.mapCacheTool.cancelSelection();
+            }
+            this.distanceMeasureTool.toggleArmed();
+        }
+
         protected void updateMapButtonLabel()
         {
             if (this.mapButton == null || this.mapCacheTool == null)
@@ -218,11 +261,35 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             }
         }
 
+        protected void updateMeasureButtonLabel()
+        {
+            if (this.measureButton == null || this.distanceMeasureTool == null)
+            {
+                return;
+            }
+
+            if (this.distanceMeasureTool.isArmed())
+            {
+                this.measureButton.setText("Cancel Measure");
+                this.measureButton.setToolTipText("Cancel distance measuring");
+            }
+            else
+            {
+                this.measureButton.setText("Measure Distance");
+                this.measureButton.setToolTipText(
+                    "Press, then drag on the globe to measure distance from the start point");
+            }
+        }
+
         protected void openCoordinateDialog()
         {
             if (this.mapCacheTool.isSelecting())
             {
                 this.mapCacheTool.cancelSelection();
+            }
+            if (this.distanceMeasureTool.isArmed())
+            {
+                this.distanceMeasureTool.setArmed(false);
             }
 
             if (!this.cacheDialog.isVisible())
