@@ -27,11 +27,13 @@
  */
 package gov.nasa.worldwindx.examples.cache;
 
+import gov.nasa.worldwind.WorldWind;
 import gov.nasa.worldwind.WorldWindow;
 import gov.nasa.worldwind.cache.FileStore;
 import gov.nasa.worldwind.event.BulkRetrievalListener;
 import gov.nasa.worldwind.geom.Sector;
 import gov.nasa.worldwind.globes.ElevationModel;
+import gov.nasa.worldwind.layers.BasicTiledImageLayer;
 import gov.nasa.worldwind.layers.Layer;
 import gov.nasa.worldwind.layers.RenderableLayer;
 import gov.nasa.worldwind.render.BasicShapeAttributes;
@@ -40,6 +42,7 @@ import gov.nasa.worldwind.render.ShapeAttributes;
 import gov.nasa.worldwind.render.SurfaceSector;
 import gov.nasa.worldwind.retrieve.BulkRetrievable;
 import gov.nasa.worldwind.retrieve.BulkRetrievalThread;
+import gov.nasa.worldwind.terrain.BasicElevationModel;
 import gov.nasa.worldwind.terrain.CompoundElevationModel;
 import gov.nasa.worldwindx.examples.ApplicationTemplate;
 
@@ -51,19 +54,22 @@ import java.util.List;
 /**
  * Reusable controller that downloads imagery and elevation for a geographic sector into the WorldWind cache.
  * <p>
- * Manual coordinate entry and future interactive map selection can both feed a {@link Sector} into this
- * controller without changing the download pipeline.
+ * Downloads are limited to a WorldWind level range (default 5-14) so cache size stays manageable.
  * </p>
  *
  * @author Cursor Agent
  */
 public class SectorCacheController
 {
+    public static final int DEFAULT_MIN_LEVEL = 5;
+    public static final int DEFAULT_MAX_LEVEL = 14;
+
     protected final WorldWindow wwd;
     protected final RenderableLayer previewLayer;
     protected final SurfaceSector previewSector;
     protected FileStore cache;
-    protected double resolution = 0;
+    protected int minLevel = DEFAULT_MIN_LEVEL;
+    protected int maxLevel = DEFAULT_MAX_LEVEL;
 
     public SectorCacheController(WorldWindow wwd)
     {
@@ -104,36 +110,37 @@ public class SectorCacheController
         return this.cache;
     }
 
-    /**
-     * Sets an optional custom cache location. When {@code null}, the default WorldWind cache is used.
-     *
-     * @param cache cache file store, or {@code null} for the default cache
-     */
     public void setCache(FileStore cache)
     {
         this.cache = cache;
     }
 
-    /**
-     * Resolution passed to {@link BulkRetrievable#makeLocal}. Zero requests the highest available resolution.
-     *
-     * @param resolution bulk retrieval resolution
-     */
-    public void setResolution(double resolution)
+    public int getMinLevel()
     {
-        this.resolution = resolution;
+        return this.minLevel;
     }
 
-    public double getResolution()
+    public int getMaxLevel()
     {
-        return this.resolution;
+        return this.maxLevel;
     }
 
     /**
-     * Collects layers and elevation models that support bulk retrieval.
+     * Sets the inclusive WorldWind level range used for bulk downloads.
      *
-     * @return unmodifiable list of bulk-retrievable data sources
+     * @param minLevel minimum level (inclusive)
+     * @param maxLevel maximum level (inclusive)
      */
+    public void setLevelRange(int minLevel, int maxLevel)
+    {
+        if (minLevel < 0 || maxLevel < 0 || minLevel > maxLevel)
+        {
+            throw new IllegalArgumentException("Invalid level range: " + minLevel + "-" + maxLevel);
+        }
+        this.minLevel = minLevel;
+        this.maxLevel = maxLevel;
+    }
+
     public List<BulkRetrievable> listBulkRetrievables()
     {
         ArrayList<BulkRetrievable> list = new ArrayList<BulkRetrievable>();
@@ -165,11 +172,6 @@ public class SectorCacheController
         return Collections.unmodifiableList(list);
     }
 
-    /**
-     * Shows the sector on the globe as a translucent preview overlay.
-     *
-     * @param sector sector to preview, or {@code null} to hide the preview
-     */
     public void showSectorPreview(Sector sector)
     {
         if (sector == null || sector.equals(Sector.EMPTY_SECTOR))
@@ -190,14 +192,6 @@ public class SectorCacheController
         this.showSectorPreview(null);
     }
 
-    /**
-     * Estimates missing data size for a retrievable within the sector.
-     *
-     * @param retrievable data source
-     * @param sector      geographic area
-     *
-     * @return estimated missing bytes, or {@code -1} if estimation fails
-     */
     public long estimateMissingDataSize(BulkRetrievable retrievable, Sector sector)
     {
         if (retrievable == null || sector == null)
@@ -207,7 +201,22 @@ public class SectorCacheController
 
         try
         {
-            return retrievable.getEstimatedMissingDataSize(sector, this.resolution, this.cache);
+            FileStore fileStore = this.cache != null ? this.cache : WorldWind.getDataFileStore();
+            if (retrievable instanceof BasicTiledImageLayer)
+            {
+                LevelRangeTiledImageBulkDownloader downloader = new LevelRangeTiledImageBulkDownloader(
+                    (BasicTiledImageLayer) retrievable, sector, this.minLevel, this.maxLevel, fileStore, null);
+                return downloader.estimateMissingDataSizeBytes();
+            }
+            if (retrievable instanceof BasicElevationModel)
+            {
+                LevelRangeElevationModelBulkDownloader downloader = new LevelRangeElevationModelBulkDownloader(
+                    (BasicElevationModel) retrievable, sector, this.minLevel, this.maxLevel, fileStore, null);
+                return downloader.estimateMissingDataSizeBytes();
+            }
+
+            // Fallback: use finest available level within maxLevel when possible.
+            return retrievable.getEstimatedMissingDataSize(sector, 0, this.cache);
         }
         catch (Exception e)
         {
@@ -215,15 +224,6 @@ public class SectorCacheController
         }
     }
 
-    /**
-     * Starts downloading the selected retrievables for the given sector into the configured cache.
-     *
-     * @param sector       geographic area to cache
-     * @param retrievables data sources to download
-     * @param listener     optional per-item retrieval listener
-     *
-     * @return started retrieval threads (never {@code null})
-     */
     public List<BulkRetrievalThread> startDownloads(Sector sector, Iterable<? extends BulkRetrievable> retrievables,
         BulkRetrievalListener listener)
     {
@@ -233,6 +233,8 @@ public class SectorCacheController
             return threads;
         }
 
+        FileStore fileStore = this.cache != null ? this.cache : WorldWind.getDataFileStore();
+
         for (BulkRetrievable retrievable : retrievables)
         {
             if (retrievable == null)
@@ -240,9 +242,36 @@ public class SectorCacheController
                 continue;
             }
 
-            BulkRetrievalThread thread = retrievable.makeLocal(sector, this.resolution, this.cache, listener);
+            BulkRetrievalThread thread = null;
+            if (retrievable instanceof BasicTiledImageLayer)
+            {
+                BasicTiledImageLayer layer = (BasicTiledImageLayer) retrievable;
+                Sector target = layer.getLevels().getSector().intersection(sector);
+                if (target != null)
+                {
+                    thread = new LevelRangeTiledImageBulkDownloader(layer, target, this.minLevel, this.maxLevel,
+                        fileStore, listener);
+                }
+            }
+            else if (retrievable instanceof BasicElevationModel)
+            {
+                BasicElevationModel model = (BasicElevationModel) retrievable;
+                Sector target = model.getLevels().getSector().intersection(sector);
+                if (target != null)
+                {
+                    thread = new LevelRangeElevationModelBulkDownloader(model, target, this.minLevel, this.maxLevel,
+                        fileStore, listener);
+                }
+            }
+            else
+            {
+                thread = retrievable.makeLocal(sector, 0, this.cache, listener);
+            }
+
             if (thread != null)
             {
+                thread.setDaemon(true);
+                thread.start();
                 threads.add(thread);
             }
         }
@@ -250,18 +279,6 @@ public class SectorCacheController
         return threads;
     }
 
-    /**
-     * Builds a sector from degree bounds after validating ranges and ordering.
-     *
-     * @param minLatitude  southern latitude in degrees
-     * @param maxLatitude  northern latitude in degrees
-     * @param minLongitude western longitude in degrees
-     * @param maxLongitude eastern longitude in degrees
-     *
-     * @return validated sector
-     *
-     * @throws IllegalArgumentException if values are out of range or inverted
-     */
     public static Sector sectorFromDegrees(double minLatitude, double maxLatitude, double minLongitude,
         double maxLongitude)
     {

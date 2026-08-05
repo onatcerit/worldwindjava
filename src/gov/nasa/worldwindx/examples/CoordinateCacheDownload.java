@@ -79,6 +79,14 @@ public class CoordinateCacheDownload extends ApplicationTemplate
                     updateMapButtonLabel();
                 }
             });
+            this.mapCacheTool.setSectorConsumer(new MapSectorCacheTool.SectorConsumer()
+            {
+                public void accept(gov.nasa.worldwind.geom.Sector sector)
+                {
+                    // Map selection and coordinate entry share the same download dialog.
+                    cacheDialog.openWithSector(sector);
+                }
+            });
             this.distanceMeasureTool = new DistanceMeasureTool(this.getWwd());
             this.distanceMeasureTool.setArmedStateListener(new Runnable()
             {
@@ -113,7 +121,8 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             });
 
             this.mapButton = new JButton("Cache from Map");
-            this.mapButton.setToolTipText("Press, then drag on the globe to select an area to download");
+            this.mapButton.setToolTipText(
+                "Press, then drag on the globe; selected coordinates open in the cache dialog");
             this.mapButton.setFocusable(false);
             this.mapButton.addActionListener(new ActionListener()
             {
@@ -257,7 +266,8 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             else
             {
                 this.mapButton.setText("Cache from Map");
-                this.mapButton.setToolTipText("Press, then drag on the globe to select an area to download");
+                this.mapButton.setToolTipText(
+                    "Press, then drag on the globe; selected coordinates open in the cache dialog");
             }
         }
 

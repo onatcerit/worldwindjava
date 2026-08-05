@@ -28,35 +28,41 @@
 package gov.nasa.worldwindx.examples.cache;
 
 import gov.nasa.worldwind.geom.Sector;
-import gov.nasa.worldwind.retrieve.BulkRetrievable;
-import gov.nasa.worldwind.retrieve.BulkRetrievalThread;
 import gov.nasa.worldwindx.examples.util.SectorSelector;
 
 import javax.swing.*;
 import java.awt.*;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
-import java.util.List;
 
 /**
- * Interactive map tool: drag a rectangle on the globe, then download that sector into the WorldWind cache.
+ * Interactive map tool: drag a rectangle on the globe, then hand the selected sector to a shared cache dialog.
  * <p>
  * Uses the existing {@link SectorSelector} without modifying it. When the user releases the mouse after drawing a
- * sector, this tool confirms and starts downloads through {@link SectorCacheController}.
+ * sector, {@link SectorConsumer#accept(Sector)} is called so coordinates can be filled into
+ * {@link CoordinateCacheDialog}.
  * </p>
  *
  * @author Cursor Agent
  */
 public class MapSectorCacheTool
 {
+    /**
+     * Receives a sector selected on the globe.
+     */
+    public interface SectorConsumer
+    {
+        void accept(Sector sector);
+    }
+
     protected final Frame owner;
     protected final SectorCacheController controller;
     protected final SectorSelector selector;
-    protected final SectorCacheProgressDialog progressDialog;
     protected final PropertyChangeListener sectorListener;
     protected boolean selecting;
     protected boolean waitingForRelease;
     protected Runnable selectionStateListener;
+    protected SectorConsumer sectorConsumer;
 
     public MapSectorCacheTool(Frame owner, SectorCacheController controller)
     {
@@ -67,7 +73,6 @@ public class MapSectorCacheTool
 
         this.owner = owner;
         this.controller = controller;
-        this.progressDialog = new SectorCacheProgressDialog(owner);
 
         this.selector = new SectorSelector(controller.getWwd());
         this.selector.setInteriorColor(new Color(1f, 1f, 1f, 0.12f));
@@ -84,11 +89,11 @@ public class MapSectorCacheTool
         this.selector.addPropertyChangeListener(SectorSelector.SECTOR_PROPERTY, this.sectorListener);
     }
 
-    /**
-     * Optional callback invoked whenever selection mode starts or stops.
-     *
-     * @param selectionStateListener runnable notified on EDT when {@link #isSelecting()} changes
-     */
+    public void setSectorConsumer(SectorConsumer sectorConsumer)
+    {
+        this.sectorConsumer = sectorConsumer;
+    }
+
     public void setSelectionStateListener(Runnable selectionStateListener)
     {
         this.selectionStateListener = selectionStateListener;
@@ -99,9 +104,6 @@ public class MapSectorCacheTool
         return this.selecting;
     }
 
-    /**
-     * Arms the sector selector so the next press-and-drag on the globe draws a rectangle.
-     */
     public void startSelection()
     {
         if (this.selecting)
@@ -116,9 +118,6 @@ public class MapSectorCacheTool
         this.notifySelectionStateChanged();
     }
 
-    /**
-     * Cancels interactive selection and clears the drawn sector.
-     */
     public void cancelSelection()
     {
         if (!this.selecting)
@@ -151,7 +150,6 @@ public class MapSectorCacheTool
             return;
         }
 
-        // While dragging, SectorSelector reports the growing sector. On mouse release it fires null.
         if (evt.getNewValue() instanceof Sector)
         {
             this.waitingForRelease = true;
@@ -184,38 +182,16 @@ public class MapSectorCacheTool
             JOptionPane.showMessageDialog(this.owner,
                 "No valid area was selected. Press and drag on the globe to draw a rectangle.",
                 "Map selection", JOptionPane.WARNING_MESSAGE);
-            // Re-arm so the user can try again without pressing the button a second time.
             this.selector.disable();
             this.selector.enable();
             return;
         }
 
-        List<BulkRetrievable> retrievables = this.controller.listBulkRetrievables();
-        if (retrievables.isEmpty())
-        {
-            JOptionPane.showMessageDialog(this.owner,
-                "No bulk-downloadable layers or elevation models are available.",
-                "Map selection", JOptionPane.WARNING_MESSAGE);
-            this.cancelSelection();
-            return;
-        }
-
-        String message = "Download cache for the selected area?\n\n"
-            + SectorCacheController.makeSectorDescription(sector)
-            + "\n\nData sources: " + retrievables.size();
-        int choice = JOptionPane.showConfirmDialog(this.owner, message, "Download selected area",
-            JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
-        if (choice != JOptionPane.OK_OPTION)
-        {
-            // Keep selection mode active so the user can draw again.
-            this.selector.disable();
-            this.selector.enable();
-            return;
-        }
-
-        List<BulkRetrievalThread> threads = this.controller.startDownloads(sector, retrievables, null);
-        this.progressDialog.showDownloads(sector, threads);
         this.cancelSelection();
+        if (this.sectorConsumer != null)
+        {
+            this.sectorConsumer.accept(sector);
+        }
     }
 
     protected void notifySelectionStateChanged()

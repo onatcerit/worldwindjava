@@ -65,6 +65,8 @@ public class CoordinateCacheDialog extends JDialog
     protected JTextField maxLatField;
     protected JTextField minLonField;
     protected JTextField maxLonField;
+    protected JSpinner minLevelSpinner;
+    protected JSpinner maxLevelSpinner;
     protected JLabel sectorLabel;
     protected JLabel cacheLocationLabel;
     protected JPanel retrievablesPanel;
@@ -120,12 +122,33 @@ public class CoordinateCacheDialog extends JDialog
         this.maxLatField = new JTextField("39.0");
         this.minLonField = new JTextField("32.0");
         this.maxLonField = new JTextField("33.0");
+        this.minLevelSpinner = new JSpinner(new SpinnerNumberModel(SectorCacheController.DEFAULT_MIN_LEVEL, 0, 22, 1));
+        this.maxLevelSpinner = new JSpinner(new SpinnerNumberModel(SectorCacheController.DEFAULT_MAX_LEVEL, 0, 22, 1));
 
         int row = 0;
         this.addLabeledField(panel, c, row++, "Min latitude (S):", this.minLatField);
         this.addLabeledField(panel, c, row++, "Max latitude (N):", this.maxLatField);
         this.addLabeledField(panel, c, row++, "Min longitude (W):", this.minLonField);
         this.addLabeledField(panel, c, row++, "Max longitude (E):", this.maxLonField);
+
+        c.gridx = 0;
+        c.gridy = row;
+        c.gridwidth = 1;
+        c.weightx = 0;
+        panel.add(new JLabel("Min zoom level:"), c);
+        c.gridx = 1;
+        c.weightx = 1;
+        panel.add(this.minLevelSpinner, c);
+        row++;
+
+        c.gridx = 0;
+        c.gridy = row;
+        c.weightx = 0;
+        panel.add(new JLabel("Max zoom level:"), c);
+        c.gridx = 1;
+        c.weightx = 1;
+        panel.add(this.maxLevelSpinner, c);
+        row++;
 
         JButton applyButton = new JButton("Apply sector");
         applyButton.setToolTipText("Validate coordinates, preview the sector on the globe, and enable download");
@@ -149,6 +172,34 @@ public class CoordinateCacheDialog extends JDialog
         panel.add(this.sectorLabel, c);
 
         return panel;
+    }
+
+    /**
+     * Fills coordinate fields from a sector (for example after map selection), applies it, and shows this dialog.
+     *
+     * @param sector selected geographic sector
+     */
+    public void openWithSector(Sector sector)
+    {
+        if (sector == null || sector.equals(Sector.EMPTY_SECTOR))
+        {
+            this.setVisible(true);
+            this.toFront();
+            return;
+        }
+
+        this.minLatField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMinLatitude().degrees));
+        this.maxLatField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMaxLatitude().degrees));
+        this.minLonField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMinLongitude().degrees));
+        this.maxLonField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMaxLongitude().degrees));
+        this.applySectorFromFields();
+
+        if (!this.isVisible())
+        {
+            this.setLocationRelativeTo(this.getOwner());
+        }
+        this.setVisible(true);
+        this.toFront();
     }
 
     protected void addLabeledField(JPanel panel, GridBagConstraints c, int row, String label, JTextField field)
@@ -275,10 +326,12 @@ public class CoordinateCacheDialog extends JDialog
             double maxLat = this.parseDegree(this.maxLatField.getText(), "Maximum latitude");
             double minLon = this.parseDegree(this.minLonField.getText(), "Minimum longitude");
             double maxLon = this.parseDegree(this.maxLonField.getText(), "Maximum longitude");
+            this.applyLevelRangeFromSpinners();
 
             this.currentSector = SectorCacheController.sectorFromDegrees(minLat, maxLat, minLon, maxLon);
             this.controller.showSectorPreview(this.currentSector);
-            this.sectorLabel.setText(SectorCacheController.makeSectorDescription(this.currentSector));
+            this.sectorLabel.setText(SectorCacheController.makeSectorDescription(this.currentSector)
+                + String.format("  |  zoom %d-%d", this.controller.getMinLevel(), this.controller.getMaxLevel()));
             this.startButton.setEnabled(true);
             this.updateRetrievableEstimates();
         }
@@ -318,12 +371,33 @@ public class CoordinateCacheDialog extends JDialog
         }
     }
 
+    protected void applyLevelRangeFromSpinners()
+    {
+        int minLevel = ((Number) this.minLevelSpinner.getValue()).intValue();
+        int maxLevel = ((Number) this.maxLevelSpinner.getValue()).intValue();
+        if (minLevel > maxLevel)
+        {
+            throw new IllegalArgumentException("Minimum zoom level must be less than or equal to maximum zoom level.");
+        }
+        this.controller.setLevelRange(minLevel, maxLevel);
+    }
+
     protected void startDownload()
     {
         if (this.currentSector == null)
         {
             JOptionPane.showMessageDialog(this, "Apply a valid sector before starting the download.",
                 "No sector", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        try
+        {
+            this.applyLevelRangeFromSpinners();
+        }
+        catch (IllegalArgumentException ex)
+        {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid zoom levels", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
