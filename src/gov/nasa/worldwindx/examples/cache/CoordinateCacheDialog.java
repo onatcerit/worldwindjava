@@ -98,6 +98,35 @@ public class CoordinateCacheDialog extends JDialog
         this.setLocationRelativeTo(owner);
     }
 
+    /**
+     * Fills coordinate fields from a sector (for example after map selection), applies it, and shows this dialog.
+     * Used by {@code CoordinateCacheDownload} when Cache from Map finishes.
+     *
+     * @param sector selected geographic sector
+     */
+    public void openWithSector(Sector sector)
+    {
+        if (sector == null || sector.equals(Sector.EMPTY_SECTOR))
+        {
+            this.setVisible(true);
+            this.toFront();
+            return;
+        }
+
+        this.minLatField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMinLatitude().degrees));
+        this.maxLatField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMaxLatitude().degrees));
+        this.minLonField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMinLongitude().degrees));
+        this.maxLonField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMaxLongitude().degrees));
+        this.applySectorFromFields();
+
+        if (!this.isVisible())
+        {
+            this.setLocationRelativeTo(this.getOwner());
+        }
+        this.setVisible(true);
+        this.toFront();
+    }
+
     protected void buildUi()
     {
         JPanel root = new JPanel(new BorderLayout(8, 8));
@@ -172,34 +201,6 @@ public class CoordinateCacheDialog extends JDialog
         panel.add(this.sectorLabel, c);
 
         return panel;
-    }
-
-    /**
-     * Fills coordinate fields from a sector (for example after map selection), applies it, and shows this dialog.
-     *
-     * @param sector selected geographic sector
-     */
-    public void openWithSector(Sector sector)
-    {
-        if (sector == null || sector.equals(Sector.EMPTY_SECTOR))
-        {
-            this.setVisible(true);
-            this.toFront();
-            return;
-        }
-
-        this.minLatField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMinLatitude().degrees));
-        this.maxLatField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMaxLatitude().degrees));
-        this.minLonField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMinLongitude().degrees));
-        this.maxLonField.setText(String.format(java.util.Locale.US, "%.6f", sector.getMaxLongitude().degrees));
-        this.applySectorFromFields();
-
-        if (!this.isVisible())
-        {
-            this.setLocationRelativeTo(this.getOwner());
-        }
-        this.setVisible(true);
-        this.toFront();
     }
 
     protected void addLabeledField(JPanel panel, GridBagConstraints c, int row, String label, JTextField field)

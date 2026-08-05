@@ -28,6 +28,7 @@
 package gov.nasa.worldwindx.examples;
 
 import gov.nasa.worldwind.avlist.AVKey;
+import gov.nasa.worldwind.geom.Sector;
 import gov.nasa.worldwind.util.WWUtil;
 import gov.nasa.worldwindx.examples.cache.CoordinateCacheDialog;
 import gov.nasa.worldwindx.examples.cache.DistanceMeasureTool;
@@ -81,10 +82,10 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             });
             this.mapCacheTool.setSectorConsumer(new MapSectorCacheTool.SectorConsumer()
             {
-                public void accept(gov.nasa.worldwind.geom.Sector sector)
+                public void accept(Sector sector)
                 {
                     // Map selection and coordinate entry share the same download dialog.
-                    cacheDialog.openWithSector(sector);
+                    AppFrame.this.openCacheDialogWithSector(sector);
                 }
             });
             this.distanceMeasureTool = new DistanceMeasureTool(this.getWwd());
@@ -308,6 +309,16 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             }
             this.cacheDialog.setVisible(true);
             this.cacheDialog.toFront();
+        }
+
+        /**
+         * Opens the shared cache dialog and fills coordinates from a map-selected sector.
+         *
+         * @param sector sector selected on the globe
+         */
+        protected void openCacheDialogWithSector(Sector sector)
+        {
+            this.cacheDialog.openWithSector(sector);
         }
     }
 
