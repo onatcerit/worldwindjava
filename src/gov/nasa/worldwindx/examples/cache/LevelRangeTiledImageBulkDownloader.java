@@ -33,26 +33,33 @@ import gov.nasa.worldwind.event.BulkRetrievalListener;
 import gov.nasa.worldwind.geom.Sector;
 import gov.nasa.worldwind.layers.BasicTiledImageLayer;
 import gov.nasa.worldwind.layers.BasicTiledImageLayerBulkDownloader;
+import gov.nasa.worldwind.util.Level;
 import gov.nasa.worldwind.util.Logging;
 import gov.nasa.worldwind.util.LevelSet;
 
 import java.util.Iterator;
 
 /**
- * Bulk imagery downloader limited to an inclusive WorldWind level range (for example 5-14).
+ * Bulk imagery downloader limited by cache folder names (for example Earth/Bing/0 .. Earth/Bing/14).
+ * <p>
+ * The min/max values are the folder names under the layer cache root, not the internal WorldWind level index.
+ * For Bing, empty leading levels are skipped so folder {@code 0} is the first non-empty zoom.
+ * </p>
  *
  * @author Cursor Agent
  */
 public class LevelRangeTiledImageBulkDownloader extends BasicTiledImageLayerBulkDownloader
 {
-    protected final int minLevel;
+    protected final int minFolder;
+    protected final int maxFolder;
 
-    public LevelRangeTiledImageBulkDownloader(BasicTiledImageLayer layer, Sector sector, int minLevel, int maxLevel,
+    public LevelRangeTiledImageBulkDownloader(BasicTiledImageLayer layer, Sector sector, int minFolder, int maxFolder,
         FileStore fileStore, BulkRetrievalListener listener)
     {
-        super(layer, sector, texelSizeForLevel(layer, maxLevel),
+        super(layer, sector, texelSizeForFolder(layer, maxFolder),
             fileStore != null ? fileStore : WorldWind.getDataFileStore(), listener);
-        this.minLevel = clampMinLevel(layer, minLevel, this.level);
+        this.minFolder = Math.max(0, minFolder);
+        this.maxFolder = Math.max(this.minFolder, maxFolder);
     }
 
     public long estimateMissingDataSizeBytes()
@@ -68,9 +75,9 @@ public class LevelRangeTiledImageBulkDownloader extends BasicTiledImageLayerBulk
             this.progress.setTotalCount(this.estimateMissingTilesCount(20));
             this.progress.setTotalSize(this.progress.getTotalCount() * estimateAverageTileSize());
 
-            for (int levelNumber = this.minLevel; levelNumber <= this.level; levelNumber++)
+            for (int levelNumber = 0; levelNumber <= this.level; levelNumber++)
             {
-                if (this.layer.getLevels().isLevelEmpty(levelNumber))
+                if (!this.shouldDownloadLevel(levelNumber))
                 {
                     continue;
                 }
@@ -114,9 +121,9 @@ public class LevelRangeTiledImageBulkDownloader extends BasicTiledImageLayerBulk
     protected long estimateMissingTilesCount(int numSamples)
     {
         long totCount = 0;
-        for (int levelNumber = this.minLevel; levelNumber <= this.level; levelNumber++)
+        for (int levelNumber = 0; levelNumber <= this.level; levelNumber++)
         {
-            if (!this.layer.getLevels().isLevelEmpty(levelNumber))
+            if (this.shouldDownloadLevel(levelNumber))
             {
                 totCount += this.layer.countImagesInSector(this.sector, levelNumber);
             }
@@ -127,7 +134,13 @@ public class LevelRangeTiledImageBulkDownloader extends BasicTiledImageLayerBulk
             return 0;
         }
 
-        int div = this.computeRegionDivisions(this.sector, this.level, 36);
+        int sampleLevel = this.level;
+        while (sampleLevel > 0 && !this.shouldDownloadLevel(sampleLevel))
+        {
+            sampleLevel--;
+        }
+
+        int div = this.computeRegionDivisions(this.sector, sampleLevel, 36);
         Sector[] regions = computeRandomRegions(this.sector, div, numSamples);
         long regionMissing = 0;
         long regionCount = 0;
@@ -135,15 +148,15 @@ public class LevelRangeTiledImageBulkDownloader extends BasicTiledImageLayerBulk
         {
             if (regions.length < numSamples)
             {
-                regionCount = this.layer.countImagesInSector(this.sector, this.level);
-                regionMissing = getMissingTilesInSector(this.sector, this.level).size();
+                regionCount = this.layer.countImagesInSector(this.sector, sampleLevel);
+                regionMissing = getMissingTilesInSector(this.sector, sampleLevel).size();
             }
             else
             {
                 for (Sector region : regions)
                 {
-                    regionCount += this.layer.countImagesInSector(region, this.level);
-                    regionMissing += getMissingTilesInSector(region, this.level).size();
+                    regionCount += this.layer.countImagesInSector(region, sampleLevel);
+                    regionMissing += getMissingTilesInSector(region, sampleLevel).size();
                 }
             }
         }
@@ -160,39 +173,67 @@ public class LevelRangeTiledImageBulkDownloader extends BasicTiledImageLayerBulk
         return (long) (totCount * ((double) regionMissing / regionCount));
     }
 
-    protected static double texelSizeForLevel(BasicTiledImageLayer layer, int requestedMaxLevel)
+    protected boolean shouldDownloadLevel(int levelNumber)
     {
-        int levelNumber = clampMaxLevel(layer, requestedMaxLevel);
+        LevelSet levels = this.layer.getLevels();
+        if (levels.isLevelEmpty(levelNumber))
+        {
+            return false;
+        }
+
+        int folder = folderNameOf(levels.getLevel(levelNumber));
+        return folder >= this.minFolder && folder <= this.maxFolder;
+    }
+
+    /**
+     * Cache folder name under the layer root (Earth/Bing/{folder}/...).
+     */
+    protected static int folderNameOf(Level level)
+    {
+        if (level == null || level.isEmpty())
+        {
+            return -1;
+        }
+
+        String name = level.getLevelName();
+        if (name != null && name.length() > 0)
+        {
+            try
+            {
+                return Integer.parseInt(name.trim());
+            }
+            catch (NumberFormatException ignore)
+            {
+                // Fall through to level number.
+            }
+        }
+
+        return level.getLevelNumber();
+    }
+
+    protected static double texelSizeForFolder(BasicTiledImageLayer layer, int maxFolder)
+    {
+        int levelNumber = findWwLevelForMaxFolder(layer, maxFolder);
         return layer.getLevels().getLevel(levelNumber).getTexelSize();
     }
 
-    protected static int clampMaxLevel(BasicTiledImageLayer layer, int requestedMaxLevel)
+    protected static int findWwLevelForMaxFolder(BasicTiledImageLayer layer, int maxFolder)
     {
         LevelSet levels = layer.getLevels();
         int last = levels.getLastLevel().getLevelNumber();
-        int max = Math.max(0, Math.min(requestedMaxLevel, last));
-        while (max > 0 && levels.isLevelEmpty(max))
+        int best = 0;
+        for (int i = 0; i <= last; i++)
         {
-            max--;
+            if (levels.isLevelEmpty(i))
+            {
+                continue;
+            }
+            int folder = folderNameOf(levels.getLevel(i));
+            if (folder >= 0 && folder <= maxFolder)
+            {
+                best = i;
+            }
         }
-        return max;
-    }
-
-    protected static int clampMinLevel(BasicTiledImageLayer layer, int requestedMinLevel, int effectiveMaxLevel)
-    {
-        LevelSet levels = layer.getLevels();
-        int last = levels.getLastLevel().getLevelNumber();
-        if (last < requestedMinLevel)
-        {
-            // Layer is coarser than the requested min zoom; download whatever it has.
-            return 0;
-        }
-
-        int min = Math.max(0, Math.min(requestedMinLevel, effectiveMaxLevel));
-        while (min < effectiveMaxLevel && levels.isLevelEmpty(min))
-        {
-            min++;
-        }
-        return min;
+        return best;
     }
 }

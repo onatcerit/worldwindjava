@@ -83,7 +83,7 @@ public class SectorCacheControllerTest
     @Test
     public void testDefaultLevelRange()
     {
-        assertEquals(5, SectorCacheController.DEFAULT_MIN_LEVEL);
+        assertEquals(0, SectorCacheController.DEFAULT_MIN_LEVEL);
         assertEquals(14, SectorCacheController.DEFAULT_MAX_LEVEL);
     }
 

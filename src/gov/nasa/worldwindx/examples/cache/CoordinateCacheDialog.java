@@ -164,7 +164,7 @@ public class CoordinateCacheDialog extends JDialog
         c.gridy = row;
         c.gridwidth = 1;
         c.weightx = 0;
-        panel.add(new JLabel("Min zoom level:"), c);
+        panel.add(new JLabel("Min cache folder (zoom):"), c);
         c.gridx = 1;
         c.weightx = 1;
         panel.add(this.minLevelSpinner, c);
@@ -173,7 +173,7 @@ public class CoordinateCacheDialog extends JDialog
         c.gridx = 0;
         c.gridy = row;
         c.weightx = 0;
-        panel.add(new JLabel("Max zoom level:"), c);
+        panel.add(new JLabel("Max cache folder (zoom):"), c);
         c.gridx = 1;
         c.weightx = 1;
         panel.add(this.maxLevelSpinner, c);

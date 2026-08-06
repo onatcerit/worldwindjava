@@ -33,26 +33,29 @@ import gov.nasa.worldwind.event.BulkRetrievalListener;
 import gov.nasa.worldwind.geom.Sector;
 import gov.nasa.worldwind.terrain.BasicElevationModel;
 import gov.nasa.worldwind.terrain.BasicElevationModelBulkDownloader;
+import gov.nasa.worldwind.util.Level;
 import gov.nasa.worldwind.util.Logging;
 import gov.nasa.worldwind.util.LevelSet;
 
 import java.util.Iterator;
 
 /**
- * Bulk elevation downloader limited to an inclusive WorldWind level range (for example 5-14).
+ * Bulk elevation downloader limited by cache folder names (for example 0 .. 14).
  *
  * @author Cursor Agent
  */
 public class LevelRangeElevationModelBulkDownloader extends BasicElevationModelBulkDownloader
 {
-    protected final int minLevel;
+    protected final int minFolder;
+    protected final int maxFolder;
 
-    public LevelRangeElevationModelBulkDownloader(BasicElevationModel elevationModel, Sector sector, int minLevel,
-        int maxLevel, FileStore fileStore, BulkRetrievalListener listener)
+    public LevelRangeElevationModelBulkDownloader(BasicElevationModel elevationModel, Sector sector, int minFolder,
+        int maxFolder, FileStore fileStore, BulkRetrievalListener listener)
     {
-        super(elevationModel, sector, texelSizeForLevel(elevationModel, maxLevel),
+        super(elevationModel, sector, texelSizeForFolder(elevationModel, maxFolder),
             fileStore != null ? fileStore : WorldWind.getDataFileStore(), listener);
-        this.minLevel = clampMinLevel(elevationModel, minLevel, this.level);
+        this.minFolder = Math.max(0, minFolder);
+        this.maxFolder = Math.max(this.minFolder, maxFolder);
     }
 
     public long estimateMissingDataSizeBytes()
@@ -68,9 +71,9 @@ public class LevelRangeElevationModelBulkDownloader extends BasicElevationModelB
             this.progress.setTotalCount(this.estimateMissingTilesCount(20));
             this.progress.setTotalSize(this.progress.getTotalCount() * estimateAverageTileSize());
 
-            for (int levelNumber = this.minLevel; levelNumber <= this.level; levelNumber++)
+            for (int levelNumber = 0; levelNumber <= this.level; levelNumber++)
             {
-                if (this.elevationModel.getLevels().isLevelEmpty(levelNumber))
+                if (!this.shouldDownloadLevel(levelNumber))
                 {
                     continue;
                 }
@@ -110,38 +113,64 @@ public class LevelRangeElevationModelBulkDownloader extends BasicElevationModelB
         }
     }
 
-    protected static double texelSizeForLevel(BasicElevationModel elevationModel, int requestedMaxLevel)
+    protected boolean shouldDownloadLevel(int levelNumber)
     {
-        int levelNumber = clampMaxLevel(elevationModel, requestedMaxLevel);
+        LevelSet levels = this.elevationModel.getLevels();
+        if (levels.isLevelEmpty(levelNumber))
+        {
+            return false;
+        }
+
+        int folder = folderNameOf(levels.getLevel(levelNumber));
+        return folder >= this.minFolder && folder <= this.maxFolder;
+    }
+
+    protected static int folderNameOf(Level level)
+    {
+        if (level == null || level.isEmpty())
+        {
+            return -1;
+        }
+
+        String name = level.getLevelName();
+        if (name != null && name.length() > 0)
+        {
+            try
+            {
+                return Integer.parseInt(name.trim());
+            }
+            catch (NumberFormatException ignore)
+            {
+                // Fall through.
+            }
+        }
+
+        return level.getLevelNumber();
+    }
+
+    protected static double texelSizeForFolder(BasicElevationModel elevationModel, int maxFolder)
+    {
+        int levelNumber = findWwLevelForMaxFolder(elevationModel, maxFolder);
         return elevationModel.getLevels().getLevel(levelNumber).getTexelSize();
     }
 
-    protected static int clampMaxLevel(BasicElevationModel elevationModel, int requestedMaxLevel)
+    protected static int findWwLevelForMaxFolder(BasicElevationModel elevationModel, int maxFolder)
     {
         LevelSet levels = elevationModel.getLevels();
         int last = levels.getLastLevel().getLevelNumber();
-        int max = Math.max(0, Math.min(requestedMaxLevel, last));
-        while (max > 0 && levels.isLevelEmpty(max))
+        int best = 0;
+        for (int i = 0; i <= last; i++)
         {
-            max--;
+            if (levels.isLevelEmpty(i))
+            {
+                continue;
+            }
+            int folder = folderNameOf(levels.getLevel(i));
+            if (folder >= 0 && folder <= maxFolder)
+            {
+                best = i;
+            }
         }
-        return max;
-    }
-
-    protected static int clampMinLevel(BasicElevationModel elevationModel, int requestedMinLevel, int effectiveMaxLevel)
-    {
-        LevelSet levels = elevationModel.getLevels();
-        int last = levels.getLastLevel().getLevelNumber();
-        if (last < requestedMinLevel)
-        {
-            return 0;
-        }
-
-        int min = Math.max(0, Math.min(requestedMinLevel, effectiveMaxLevel));
-        while (min < effectiveMaxLevel && levels.isLevelEmpty(min))
-        {
-            min++;
-        }
-        return min;
+        return best;
     }
 }

@@ -54,14 +54,14 @@ import java.util.List;
 /**
  * Reusable controller that downloads imagery and elevation for a geographic sector into the WorldWind cache.
  * <p>
- * Downloads are limited to a WorldWind level range (default 5-14) so cache size stays manageable.
+ * Downloads are limited to cache folder names 0-14 by default (Earth/Bing/0 .. Earth/Bing/14 when available).
  * </p>
  *
  * @author Cursor Agent
  */
 public class SectorCacheController
 {
-    public static final int DEFAULT_MIN_LEVEL = 5;
+    public static final int DEFAULT_MIN_LEVEL = 0;
     public static final int DEFAULT_MAX_LEVEL = 14;
 
     protected final WorldWindow wwd;
@@ -126,10 +126,10 @@ public class SectorCacheController
     }
 
     /**
-     * Sets the inclusive WorldWind level range used for bulk downloads.
+     * Sets the inclusive cache-folder zoom range used for bulk downloads (Earth/Bing/{n}/...).
      *
-     * @param minLevel minimum level (inclusive)
-     * @param maxLevel maximum level (inclusive)
+     * @param minLevel minimum folder name (inclusive), typically 0
+     * @param maxLevel maximum folder name (inclusive), typically 14
      */
     public void setLevelRange(int minLevel, int maxLevel)
     {
