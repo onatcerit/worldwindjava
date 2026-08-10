@@ -552,6 +552,8 @@ public class CoordinateCacheDialog extends JDialog
         protected final JProgressBar progressBar;
         protected final JButton cancelButton;
         protected final Timer updateTimer;
+        protected long fixedTotalSize = -1;
+        protected long fixedTotalCount = -1;
 
         DownloadMonitorPanel(BulkRetrievalThread thread)
         {
@@ -562,6 +564,8 @@ public class CoordinateCacheDialog extends JDialog
 
             this.descriptionLabel = new JLabel(thread.getRetrievable().getName());
             this.progressBar = new JProgressBar(0, 100);
+            this.progressBar.setStringPainted(true);
+            this.progressBar.setString("0%");
             this.cancelButton = new JButton("Cancel");
             this.cancelButton.setBackground(Color.RED);
             this.cancelButton.addActionListener(new ActionListener()
@@ -616,26 +620,55 @@ public class CoordinateCacheDialog extends JDialog
         {
             long current = this.thread.getProgress().getCurrentSize();
             long total = this.thread.getProgress().getTotalSize();
+            long currentCount = this.thread.getProgress().getCurrentCount();
+            long totalCount = this.thread.getProgress().getTotalCount();
+
+            // Lock the original totals so the right-hand side does not shrink toward zero.
+            if (this.fixedTotalSize < 0 && total > 0)
+            {
+                this.fixedTotalSize = total;
+            }
+            if (this.fixedTotalCount < 0 && totalCount > 0)
+            {
+                this.fixedTotalCount = totalCount;
+            }
+
+            long displayTotal = this.fixedTotalSize > 0 ? this.fixedTotalSize : Math.max(total, current);
+            if (current > displayTotal)
+            {
+                displayTotal = current;
+                this.fixedTotalSize = current;
+            }
+
             String name = this.thread.getRetrievable().getName();
             if (name.length() > 28)
             {
                 name = name.substring(0, 25) + "...";
             }
+            // Left grows 0 → total; right stays fixed at the original total.
             this.descriptionLabel.setText(name + " (" + SectorCacheController.makeSizeDescription(current)
-                + " / " + SectorCacheController.makeSizeDescription(total) + ")");
+                + " / " + SectorCacheController.makeSizeDescription(displayTotal) + ")");
             this.descriptionLabel.setToolTipText(SectorCacheController.makeSectorDescription(this.thread.getSector()));
 
             int percent = 0;
-            if (this.thread.getProgress().getTotalCount() > 0)
+            if (this.fixedTotalCount > 0)
             {
-                percent = (int) WWMath.clamp(
-                    (this.thread.getProgress().getCurrentCount() * 100.0)
-                        / this.thread.getProgress().getTotalCount(), 0, 100);
+                percent = (int) WWMath.clamp((currentCount * 100.0) / this.fixedTotalCount, 0, 100);
             }
+            else if (displayTotal > 0)
+            {
+                percent = (int) WWMath.clamp((current * 100.0) / displayTotal, 0, 100);
+            }
+
             this.progressBar.setValue(percent);
+            this.progressBar.setString(percent + "%");
+            this.progressBar.setForeground(new Color(0, 160, 0));
 
             if (!this.thread.isAlive())
             {
+                this.progressBar.setValue(100);
+                this.progressBar.setString("Done");
+                this.progressBar.setForeground(new Color(0, 160, 0));
                 this.cancelButton.setText("Remove");
                 this.cancelButton.setBackground(Color.GREEN);
                 this.updateTimer.stop();
