@@ -307,6 +307,9 @@ public class ApplicationTemplate {
     public static void main(String[] args) {
         // Call the static start method like this from the main method of your derived class.
         // Substitute your application's name for the first argument.
-        ApplicationTemplate.start("WorldWind Application", AppFrame.class);
+        // Uses CoordinateCacheDownload.AppFrame so the default World Wind Application includes
+        // cache-by-coordinates, cache-from-map, and distance-measure controls.
+        ApplicationTemplate.start("WorldWind Application",
+                gov.nasa.worldwindx.examples.CoordinateCacheDownload.AppFrame.class);
     }
 }
