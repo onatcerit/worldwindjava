@@ -27,237 +27,189 @@
  */
 package gov.nasa.worldwindx.examples.cache;
 
-import gov.nasa.worldwind.WorldWindow;
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.event.PositionEvent;
-import gov.nasa.worldwind.event.PositionListener;
-import gov.nasa.worldwind.geom.Angle;
-import gov.nasa.worldwind.geom.LatLon;
 import gov.nasa.worldwind.geom.Position;
-import gov.nasa.worldwind.layers.RenderableLayer;
-import gov.nasa.worldwind.render.AnnotationAttributes;
 import gov.nasa.worldwind.render.BasicShapeAttributes;
 import gov.nasa.worldwind.render.GlobeAnnotation;
 import gov.nasa.worldwind.render.Material;
 import gov.nasa.worldwind.render.Path;
 import gov.nasa.worldwind.render.ShapeAttributes;
-import gov.nasa.worldwindx.examples.ApplicationTemplate;
 
 import java.awt.*;
-import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseMotionListener;
 import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Google Maps-style distance measure tool.
+ * Google Maps-style distance measuring that keeps as many measurements on the globe as the user wants.
  * <p>
- * When armed, the user presses on the globe to set a start point, then drags to stretch a line. The geodesic distance
- * from the start point is displayed in a label centered on the line and updates continuously while dragging.
+ * While armed:
+ * </p>
+ * <ul>
+ * <li>Press, drag and release draws a single segment and finishes that measurement straight away.</li>
+ * <li>Clicking places points one after another; the line follows the cursor and shows the running total. A
+ * double-click or a right-click finishes the measurement.</li>
+ * </ul>
+ * <p>
+ * A finished measurement stays on the globe with its total distance and a red delete button next to its last point.
+ * The tool remains armed, so the next measurement can be started immediately.
  * </p>
  *
  * @author Cursor Agent
  */
-public class DistanceMeasureTool extends MouseAdapter implements MouseMotionListener, PositionListener
+public class DistanceMeasureTool extends AbstractMapTool
 {
-    protected final WorldWindow wwd;
-    protected final RenderableLayer layer;
-    protected final Path path;
-    protected final GlobeAnnotation distanceLabel;
-    protected final ShapeAttributes pathAttributes;
+    protected static final Color LINE_COLOR = new Color(30, 120, 220);
 
-    protected boolean armed;
-    protected boolean dragging;
-    protected Position startPosition;
-    protected Position endPosition;
-    protected Runnable armedStateListener;
+    protected final Path previewPath;
+    protected final GlobeAnnotation previewLabel;
 
-    public DistanceMeasureTool(WorldWindow wwd)
+    protected final List<Position> vertices = new ArrayList<Position>();
+    protected Position rubberBandEnd;
+    protected Position pressPosition;
+    protected Point pressScreenPoint;
+    protected boolean measuring;
+
+    public DistanceMeasureTool(MapOverlayManager manager)
     {
-        if (wwd == null)
-        {
-            throw new IllegalArgumentException("WorldWindow is required");
-        }
+        super(manager);
 
-        this.wwd = wwd;
+        this.previewPath = createPath(LINE_COLOR, 3);
+        this.previewPath.setVisible(false);
 
-        this.pathAttributes = new BasicShapeAttributes();
-        this.pathAttributes.setOutlineMaterial(new Material(new Color(30, 120, 220)));
-        this.pathAttributes.setOutlineWidth(3);
-        this.pathAttributes.setOutlineOpacity(0.95);
-        this.pathAttributes.setDrawOutline(true);
-        this.pathAttributes.setDrawInterior(false);
+        this.previewLabel = new GlobeAnnotation("", Position.ZERO, createLabelAttributes(LINE_COLOR));
+        this.previewLabel.setAlwaysOnTop(true);
+        this.previewLabel.setPickEnabled(false);
+        this.previewLabel.getAttributes().setVisible(false);
 
-        this.path = new Path();
-        this.path.setAttributes(this.pathAttributes);
-        this.path.setPathType(AVKey.GREAT_CIRCLE);
-        this.path.setFollowTerrain(true);
-        this.path.setTerrainConformance(5);
-        this.path.setVisible(false);
-
-        AnnotationAttributes labelAttrs = new AnnotationAttributes();
-        labelAttrs.setFrameShape(AVKey.SHAPE_RECTANGLE);
-        labelAttrs.setInsets(new Insets(5, 8, 5, 8));
-        labelAttrs.setDrawOffset(new Point(0, 18));
-        labelAttrs.setBackgroundColor(new Color(255, 255, 255, 230));
-        labelAttrs.setTextColor(Color.BLACK);
-        labelAttrs.setBorderColor(new Color(30, 120, 220));
-        labelAttrs.setBorderWidth(1.5);
-        labelAttrs.setCornerRadius(6);
-        labelAttrs.setFont(Font.decode("Arial-BOLD-14"));
-        labelAttrs.setEffect(AVKey.TEXT_EFFECT_NONE);
-        labelAttrs.setLeader(AVKey.SHAPE_NONE);
-        labelAttrs.setAdjustWidthToText(AVKey.SIZE_FIT_TEXT);
-
-        this.distanceLabel = new GlobeAnnotation("", Position.ZERO, labelAttrs);
-        this.distanceLabel.setAlwaysOnTop(true);
-        this.distanceLabel.setPickEnabled(false);
-        this.distanceLabel.getAttributes().setVisible(false);
-
-        this.layer = new RenderableLayer();
-        this.layer.setName("Distance Measure");
-        this.layer.setPickEnabled(false);
-        this.layer.addRenderable(this.path);
-        this.layer.addRenderable(this.distanceLabel);
-        ApplicationTemplate.insertBeforeCompass(this.wwd, this.layer);
-
-        this.wwd.getInputHandler().addMouseListener(this);
-        this.wwd.getInputHandler().addMouseMotionListener(this);
-        this.wwd.addPositionListener(this);
+        this.manager.getShapeLayer().addRenderable(this.previewPath);
+        this.manager.getShapeLayer().addRenderable(this.previewLabel);
     }
 
-    public boolean isArmed()
+    /**
+     * Returns the number of finished measurements currently on the globe.
+     *
+     * @return the measurement count.
+     */
+    public int getMeasurementCount()
     {
-        return this.armed;
+        return this.manager.getOverlayCount(MapOverlay.MEASUREMENT);
     }
 
-    public void setArmedStateListener(Runnable armedStateListener)
+    /** Removes every finished measurement from the globe. */
+    public void clearMeasurements()
     {
-        this.armedStateListener = armedStateListener;
-    }
-
-    public void setArmed(boolean armed)
-    {
-        if (this.armed == armed)
-        {
-            return;
-        }
-
-        this.armed = armed;
-        this.dragging = false;
-
-        if (armed)
-        {
-            this.clearMeasurement();
-            ((Component) this.wwd).setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
-        }
-        else
-        {
-            ((Component) this.wwd).setCursor(Cursor.getDefaultCursor());
-        }
-
-        this.notifyArmedStateChanged();
-        this.wwd.redraw();
-    }
-
-    public void toggleArmed()
-    {
-        this.setArmed(!this.armed);
-    }
-
-    public void clearMeasurement()
-    {
-        this.startPosition = null;
-        this.endPosition = null;
-        this.dragging = false;
-        this.path.setVisible(false);
-        this.path.setPositions(new ArrayList<Position>());
-        this.distanceLabel.getAttributes().setVisible(false);
-        this.distanceLabel.setText("");
-        this.wwd.redraw();
-    }
-
-    public double getDistanceMeters()
-    {
-        if (this.startPosition == null || this.endPosition == null)
-        {
-            return -1;
-        }
-        return this.computeDistanceMeters(this.startPosition, this.endPosition);
+        this.manager.removeOverlays(MapOverlay.MEASUREMENT);
     }
 
     @Override
     public void mousePressed(MouseEvent e)
     {
-        if (!this.armed || e.getButton() != MouseEvent.BUTTON1 || e.isConsumed())
+        if (!this.armed || e.isConsumed() || this.isOverOverlayControl())
         {
             return;
         }
 
-        Position position = this.wwd.getCurrentPosition();
-        if (position == null)
+        if (e.getButton() == MouseEvent.BUTTON3)
+        {
+            if (this.measuring)
+            {
+                this.finishMeasurement();
+                e.consume();
+            }
+            return;
+        }
+
+        if (e.getButton() != MouseEvent.BUTTON1)
         {
             return;
         }
 
-        this.startPosition = position;
-        this.endPosition = position;
-        this.dragging = true;
-        this.updateGraphics();
+        this.pressScreenPoint = e.getPoint();
+        this.pressPosition = this.wwd.getCurrentPosition();
         e.consume();
     }
 
     @Override
     public void mouseDragged(MouseEvent e)
     {
-        if (!this.armed || !this.dragging || e.isConsumed())
+        if (!this.armed || this.pressPosition == null || e.isConsumed())
         {
             return;
         }
 
         Position position = this.wwd.getCurrentPosition();
-        if (position == null)
+        if (position != null)
         {
-            return;
+            this.rubberBandEnd = position;
+            this.updatePreview();
         }
-
-        this.endPosition = position;
-        this.updateGraphics();
         e.consume();
     }
 
     @Override
     public void mouseReleased(MouseEvent e)
     {
-        if (!this.armed || e.getButton() != MouseEvent.BUTTON1 || e.isConsumed())
+        if (!this.armed || e.getButton() != MouseEvent.BUTTON1 || this.pressPosition == null || e.isConsumed())
         {
             return;
         }
 
-        if (this.dragging)
+        Position release = this.wwd.getCurrentPosition();
+        boolean dragged = this.isDrag(this.pressScreenPoint, e.getPoint());
+
+        if (!this.measuring)
         {
-            Position position = this.wwd.getCurrentPosition();
-            if (position != null)
-            {
-                this.endPosition = position;
-                this.updateGraphics();
-            }
-            this.dragging = false;
-            // Keep the finished measurement visible; disarm so the next interaction can pan the globe.
-            this.setArmed(false);
+            this.measuring = true;
+            this.vertices.clear();
+            this.vertices.add(this.pressPosition);
+        }
+        else
+        {
+            this.addVertex(this.pressPosition);
+        }
+
+        if (dragged && release != null)
+        {
+            this.addVertex(release);
+            this.finishMeasurement();
+        }
+        else
+        {
+            this.rubberBandEnd = this.pressPosition;
+            this.updatePreview();
+        }
+
+        this.pressPosition = null;
+        this.pressScreenPoint = null;
+        e.consume();
+    }
+
+    @Override
+    public void mouseClicked(MouseEvent e)
+    {
+        if (!this.armed || e.isConsumed())
+        {
+            return;
+        }
+
+        if (this.isOverOverlayControl())
+        {
+            return;
+        }
+
+        if (e.getButton() == MouseEvent.BUTTON1 && e.getClickCount() >= 2 && this.measuring)
+        {
+            this.finishMeasurement();
             e.consume();
         }
     }
 
     @Override
-    public void mouseMoved(MouseEvent e)
-    {
-        // Required by MouseMotionListener; unused while not dragging.
-    }
-
     public void moved(PositionEvent event)
     {
-        if (!this.armed || !this.dragging)
+        if (!this.armed || !this.measuring)
         {
             return;
         }
@@ -268,70 +220,122 @@ public class DistanceMeasureTool extends MouseAdapter implements MouseMotionList
             return;
         }
 
-        this.endPosition = position;
-        this.updateGraphics();
+        this.rubberBandEnd = position;
+        this.updatePreview();
     }
 
-    protected void updateGraphics()
+    protected void addVertex(Position position)
     {
-        if (this.startPosition == null || this.endPosition == null)
+        if (position == null)
         {
-            this.path.setVisible(false);
-            this.distanceLabel.getAttributes().setVisible(false);
             return;
         }
 
-        ArrayList<Position> positions = new ArrayList<Position>(2);
-        positions.add(this.startPosition);
-        positions.add(this.endPosition);
-        this.path.setPositions(positions);
-        this.path.setVisible(true);
+        // A double-click delivers two press-release pairs at the same spot; do not record the point twice.
+        if (!this.vertices.isEmpty() && this.vertices.get(this.vertices.size() - 1).equals(position))
+        {
+            return;
+        }
 
-        double meters = this.computeDistanceMeters(this.startPosition, this.endPosition);
-        Position mid = this.computeMidPosition(this.startPosition, this.endPosition);
-        this.distanceLabel.setPosition(mid);
-        this.distanceLabel.setText(formatDistance(meters));
-        this.distanceLabel.getAttributes().setVisible(true);
+        this.vertices.add(position);
+    }
+
+    protected void updatePreview()
+    {
+        if (!this.measuring || this.vertices.isEmpty())
+        {
+            this.previewPath.setVisible(false);
+            this.previewLabel.getAttributes().setVisible(false);
+            this.wwd.redraw();
+            return;
+        }
+
+        List<Position> preview = new ArrayList<Position>(this.vertices);
+        if (this.rubberBandEnd != null && !preview.get(preview.size() - 1).equals(this.rubberBandEnd))
+        {
+            preview.add(this.rubberBandEnd);
+        }
+
+        if (preview.size() < 2)
+        {
+            this.previewPath.setVisible(false);
+            this.previewLabel.getAttributes().setVisible(false);
+            this.wwd.redraw();
+            return;
+        }
+
+        this.previewPath.setPositions(preview);
+        this.previewPath.setVisible(true);
+
+        double meters = this.computePathLengthMeters(preview);
+        this.previewLabel.setPosition(midPosition(preview.get(preview.size() - 2), preview.get(preview.size() - 1)));
+        this.previewLabel.setText(formatDistance(meters));
+        this.previewLabel.getAttributes().setVisible(true);
 
         this.wwd.redraw();
     }
 
-    protected double computeDistanceMeters(Position start, Position end)
+    protected void finishMeasurement()
     {
-        Angle distance = LatLon.greatCircleDistance(start, end);
-        double radius = this.wwd.getModel().getGlobe().getRadiusAt(start);
-        return distance.radians * radius;
+        if (this.vertices.size() < 2)
+        {
+            this.cancelInProgressWork();
+            return;
+        }
+
+        List<Position> positions = new ArrayList<Position>(this.vertices);
+        double meters = this.computePathLengthMeters(positions);
+        Position last = positions.get(positions.size() - 1);
+
+        MapOverlay overlay = new MapOverlay(MapOverlay.MEASUREMENT, last);
+
+        Path path = createPath(LINE_COLOR, 3);
+        path.setPositions(positions);
+        path.setShowPositions(true);
+        path.setShowPositionsScale(4);
+        overlay.addRenderable(path);
+
+        GlobeAnnotation label = new GlobeAnnotation(formatDistance(meters),
+            midPosition(positions.get(positions.size() - 2), last), createLabelAttributes(LINE_COLOR));
+        label.setAlwaysOnTop(true);
+        label.setPickEnabled(false);
+        overlay.addRenderable(label);
+
+        overlay.setDescription(formatDistance(meters));
+        this.manager.addOverlay(overlay);
+
+        this.cancelInProgressWork();
     }
 
-    protected Position computeMidPosition(Position start, Position end)
+    @Override
+    protected void cancelInProgressWork()
     {
-        LatLon mid = LatLon.interpolateGreatCircle(0.5, start, end);
-        double elevation = 0.5 * (start.getElevation() + end.getElevation());
-        return new Position(mid, elevation);
+        this.measuring = false;
+        this.vertices.clear();
+        this.rubberBandEnd = null;
+        this.pressPosition = null;
+        this.pressScreenPoint = null;
+        this.previewPath.setVisible(false);
+        this.previewPath.setPositions(new ArrayList<Position>());
+        this.previewLabel.setText("");
+        this.previewLabel.getAttributes().setVisible(false);
+        this.wwd.redraw();
     }
 
-    public static String formatDistance(double meters)
+    protected static Path createPath(Color color, double width)
     {
-        if (meters < 0)
-        {
-            return "-";
-        }
-        if (meters < 1000)
-        {
-            return String.format("%.0f m", meters);
-        }
-        if (meters < 10000)
-        {
-            return String.format("%.2f km", meters / 1000.0);
-        }
-        return String.format("%.1f km", meters / 1000.0);
-    }
+        ShapeAttributes attrs = new BasicShapeAttributes();
+        attrs.setOutlineMaterial(new Material(color));
+        attrs.setOutlineWidth(width);
+        attrs.setOutlineOpacity(0.95);
+        attrs.setDrawOutline(true);
+        attrs.setDrawInterior(false);
 
-    protected void notifyArmedStateChanged()
-    {
-        if (this.armedStateListener != null)
-        {
-            this.armedStateListener.run();
-        }
+        Path path = new Path();
+        path.setAttributes(attrs);
+        path.setPathType(AVKey.GREAT_CIRCLE);
+        // Clamps to the ground and follows the terrain, so the line lies on the map rather than cutting through hills.
+        path.setSurfacePath(true);
+        return path;
     }
 }

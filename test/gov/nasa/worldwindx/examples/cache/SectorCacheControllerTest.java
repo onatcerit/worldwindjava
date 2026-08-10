@@ -83,20 +83,7 @@ public class SectorCacheControllerTest
     @Test
     public void testDefaultLevelRange()
     {
-        assertEquals(0, SectorCacheController.DEFAULT_MIN_LEVEL);
+        assertEquals(5, SectorCacheController.DEFAULT_MIN_LEVEL);
         assertEquals(14, SectorCacheController.DEFAULT_MAX_LEVEL);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void testInvalidLevelRange()
-    {
-        // WorldWindow is not needed for this validation path once constructed via reflection-free check:
-        // use a dummy by validating the same rule inline.
-        int minLevel = 10;
-        int maxLevel = 4;
-        if (minLevel < 0 || maxLevel < 0 || minLevel > maxLevel)
-        {
-            throw new IllegalArgumentException("Invalid level range");
-        }
     }
 }

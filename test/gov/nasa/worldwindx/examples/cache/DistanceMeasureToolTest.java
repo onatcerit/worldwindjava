@@ -27,6 +27,7 @@
  */
 package gov.nasa.worldwindx.examples.cache;
 
+import gov.nasa.worldwind.geom.LatLon;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -53,5 +54,31 @@ public class DistanceMeasureToolTest
     public void testFormatDistanceNegative()
     {
         assertEquals("-", DistanceMeasureTool.formatDistance(-1));
+    }
+
+    @Test
+    public void testFormatAreaSquareMeters()
+    {
+        assertTrue(AbstractMapTool.formatArea(500000).endsWith(" m\u00B2"));
+    }
+
+    @Test
+    public void testFormatAreaSquareKilometers()
+    {
+        assertTrue(AbstractMapTool.formatArea(5e6).endsWith(" km\u00B2"));
+    }
+
+    @Test
+    public void testFormatAreaNegative()
+    {
+        assertEquals("-", AbstractMapTool.formatArea(-1));
+    }
+
+    @Test
+    public void testFormatLatLon()
+    {
+        assertEquals("38.50000\u00B0, 32.25000\u00B0",
+            AbstractMapTool.formatLatLon(LatLon.fromDegrees(38.5, 32.25)));
+        assertEquals("-", AbstractMapTool.formatLatLon(null));
     }
 }
