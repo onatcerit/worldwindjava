@@ -27,6 +27,7 @@
  */
 package gov.nasa.worldwindx.examples.cache;
 
+import gov.nasa.worldwind.WorldWind;
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.event.PositionEvent;
 import gov.nasa.worldwind.geom.Position;
@@ -334,8 +335,11 @@ public class DistanceMeasureTool extends AbstractMapTool
         Path path = new Path();
         path.setAttributes(attrs);
         path.setPathType(AVKey.GREAT_CIRCLE);
-        // Clamps to the ground and follows the terrain, so the line lies on the map rather than cutting through hills.
-        path.setSurfacePath(true);
+        // Lay the line on the map so it drapes over hills instead of cutting through them. These two calls are the
+        // body of Path.setSurfacePath(true), spelled out because that convenience method does not exist in
+        // WorldWind 2.1.0.
+        path.setAltitudeMode(WorldWind.CLAMP_TO_GROUND);
+        path.setFollowTerrain(true);
         return path;
     }
 }
