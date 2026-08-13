@@ -78,6 +78,7 @@ public class CoordinateCacheDialog extends JDialog
     protected JPanel retrievablesPanel;
     protected JPanel monitorPanel;
     protected JButton startButton;
+    protected JButton clearButton;
     protected final List<RetrievableRow> rows = new ArrayList<RetrievableRow>();
 
     public CoordinateCacheDialog(Frame owner, SectorCacheController controller)
@@ -291,6 +292,17 @@ public class CoordinateCacheDialog extends JDialog
             }
         });
 
+        this.clearButton = new JButton("Clear");
+        this.clearButton.setToolTipText("Remove finished downloads from this list. The cached tiles are kept.");
+        this.clearButton.setEnabled(false);
+        this.clearButton.addActionListener(new ActionListener()
+        {
+            public void actionPerformed(ActionEvent e)
+            {
+                clearFinishedDownloads();
+            }
+        });
+
         JButton closeButton = new JButton("Close");
         closeButton.addActionListener(new ActionListener()
         {
@@ -301,8 +313,54 @@ public class CoordinateCacheDialog extends JDialog
         });
 
         panel.add(this.startButton);
+        panel.add(this.clearButton);
         panel.add(closeButton);
         return panel;
+    }
+
+    /**
+     * Drops every finished row from the Downloads list. Only the list entry goes away; the tiles stay in the cache.
+     */
+    protected void clearFinishedDownloads()
+    {
+        for (Component component : this.monitorPanel.getComponents())
+        {
+            if (component instanceof DownloadMonitorPanel)
+            {
+                DownloadMonitorPanel monitor = (DownloadMonitorPanel) component;
+                if (!monitor.thread.isAlive())
+                {
+                    monitor.dispose();
+                    this.monitorPanel.remove(monitor);
+                }
+            }
+        }
+
+        this.monitorPanel.revalidate();
+        this.monitorPanel.repaint();
+        this.updateClearButton();
+    }
+
+    /** Enables the Clear button only while there is a finished row to clear. */
+    protected void updateClearButton()
+    {
+        if (this.clearButton == null)
+        {
+            return;
+        }
+
+        boolean anyFinished = false;
+        for (Component component : this.monitorPanel.getComponents())
+        {
+            if (component instanceof DownloadMonitorPanel
+                && !((DownloadMonitorPanel) component).thread.isAlive())
+            {
+                anyFinished = true;
+                break;
+            }
+        }
+
+        this.clearButton.setEnabled(anyFinished);
     }
 
     protected void populateRetrievableRows()
@@ -661,14 +719,7 @@ public class CoordinateCacheDialog extends JDialog
             {
                 public void actionPerformed(ActionEvent e)
                 {
-                    if (DownloadMonitorPanel.this.thread.isAlive())
-                    {
-                        cancel();
-                    }
-                    else
-                    {
-                        removeFromParent();
-                    }
+                    cancel();
                 }
             });
 
@@ -696,21 +747,20 @@ public class CoordinateCacheDialog extends JDialog
 
         void cancel()
         {
+            if (!this.thread.isAlive())
+            {
+                return;
+            }
+
             this.cancelled = true;
             this.thread.interrupt();
             this.updateStatus();
         }
 
-        void removeFromParent()
+        /** Stops this row's timer. Called before the row is dropped from the list. */
+        void dispose()
         {
             this.updateTimer.stop();
-            Container parent = this.getParent();
-            if (parent != null)
-            {
-                parent.remove(this);
-                parent.revalidate();
-                parent.repaint();
-            }
         }
 
         protected void updateStatus()
@@ -754,8 +804,9 @@ public class CoordinateCacheDialog extends JDialog
             {
                 this.finished = true;
                 this.updateTimer.stop();
-                this.cancelButton.setText("Remove");
-                this.cancelButton.setBackground(this.cancelled ? Color.ORANGE : Color.GREEN);
+                // Nothing left to cancel; the one Clear button at the bottom takes the row away.
+                this.cancelButton.setVisible(false);
+                updateClearButton();
             }
 
             if (this.cancelled)

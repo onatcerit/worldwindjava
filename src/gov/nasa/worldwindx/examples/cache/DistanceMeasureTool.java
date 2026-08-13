@@ -45,16 +45,18 @@ import java.util.List;
 /**
  * Google Maps-style distance measuring that keeps as many measurements on the globe as the user wants.
  * <p>
- * While armed:
+ * While armed, one measurement takes two points and finishes on its own:
  * </p>
  * <ul>
- * <li>Press, drag and release draws a single segment and finishes that measurement straight away.</li>
- * <li>Clicking places points one after another; the line follows the cursor and shows the running total. A
- * double-click or a right-click finishes the measurement.</li>
+ * <li>Click once to drop the start point, move the mouse to see the line and the running distance, then click again to
+ * finish.</li>
+ * <li>Or press, drag and release to do both in one gesture.</li>
+ * <li>The right button abandons a measurement that has only its first point down.</li>
  * </ul>
  * <p>
  * A finished measurement stays on the globe with its total distance and a red delete button next to its last point.
- * The tool remains armed, so the next measurement can be started immediately.
+ * The tool remains armed, so the next measurement starts on the very next click and measurements never chain into one
+ * growing line.
  * </p>
  *
  * @author Cursor Agent
@@ -114,9 +116,10 @@ public class DistanceMeasureTool extends AbstractMapTool
 
         if (e.getButton() == MouseEvent.BUTTON3)
         {
+            // Right button abandons a measurement whose first point is already down.
             if (this.measuring)
             {
-                this.finishMeasurement();
+                this.cancelInProgressWork();
                 e.consume();
             }
             return;
@@ -159,52 +162,37 @@ public class DistanceMeasureTool extends AbstractMapTool
 
         Position release = this.wwd.getCurrentPosition();
         boolean dragged = this.isDrag(this.pressScreenPoint, e.getPoint());
+        Position endPoint = dragged && release != null ? release : this.pressPosition;
 
         if (!this.measuring)
         {
+            // First point of a new measurement. A drag completes it in one gesture; a plain click waits for the
+            // second click.
             this.measuring = true;
             this.vertices.clear();
             this.vertices.add(this.pressPosition);
-        }
-        else
-        {
-            this.addVertex(this.pressPosition);
-        }
+            this.rubberBandEnd = endPoint;
 
-        if (dragged && release != null)
-        {
-            this.addVertex(release);
-            this.finishMeasurement();
+            if (dragged && release != null)
+            {
+                this.addVertex(release);
+                this.finishMeasurement();
+            }
+            else
+            {
+                this.updatePreview();
+            }
         }
         else
         {
-            this.rubberBandEnd = this.pressPosition;
-            this.updatePreview();
+            // Second point closes the measurement, so measurements never chain into one endless line.
+            this.addVertex(endPoint);
+            this.finishMeasurement();
         }
 
         this.pressPosition = null;
         this.pressScreenPoint = null;
         e.consume();
-    }
-
-    @Override
-    public void mouseClicked(MouseEvent e)
-    {
-        if (!this.armed || e.isConsumed())
-        {
-            return;
-        }
-
-        if (this.isOverOverlayControl())
-        {
-            return;
-        }
-
-        if (e.getButton() == MouseEvent.BUTTON1 && e.getClickCount() >= 2 && this.measuring)
-        {
-            this.finishMeasurement();
-            e.consume();
-        }
     }
 
     @Override

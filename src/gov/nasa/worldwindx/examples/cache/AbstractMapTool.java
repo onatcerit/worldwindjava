@@ -124,6 +124,26 @@ public abstract class AbstractMapTool extends MouseAdapter implements MouseMotio
         // reports the geographic position under the cursor rather than the screen point.
     }
 
+    /**
+     * Swallows clicks while the tool is armed.
+     * <p>
+     * WorldWind binds VIEW_MOVE_TO to an unconsumed button-one click, so without this the globe flies to every point
+     * the user places. Consuming the press and the release is not enough: the click arrives as its own event.
+     * </p>
+     *
+     * @param e the click event.
+     */
+    @Override
+    public void mouseClicked(MouseEvent e)
+    {
+        if (!this.armed || e.isConsumed() || this.isOverOverlayControl())
+        {
+            return;
+        }
+
+        e.consume();
+    }
+
     public void moved(PositionEvent event)
     {
         // Overridden by tools that echo a shape under the cursor.
