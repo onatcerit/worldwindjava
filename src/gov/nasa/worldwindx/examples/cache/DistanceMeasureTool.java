@@ -64,6 +64,8 @@ import java.util.List;
 public class DistanceMeasureTool extends AbstractMapTool
 {
     protected static final Color LINE_COLOR = new Color(30, 120, 220);
+    /** Cursor movement below this fraction of the eye altitude does not rebuild the preview. */
+    protected static final double ECHO_ALTITUDE_FRACTION = 0.0005;
 
     protected final SurfacePolyline previewLine;
     protected final GlobeAnnotation previewLabel;
@@ -147,6 +149,7 @@ public class DistanceMeasureTool extends AbstractMapTool
             }
             this.rubberBandEnd = this.pressPosition;
             this.updatePreview();
+            this.wwd.redraw();
         }
 
         e.consume();
@@ -186,6 +189,7 @@ public class DistanceMeasureTool extends AbstractMapTool
             // Plain first click: keep the start point on the globe and wait for the closing click.
             this.rubberBandEnd = endPoint;
             this.updatePreview();
+            this.wwd.redraw();
         }
         else
         {
@@ -209,13 +213,38 @@ public class DistanceMeasureTool extends AbstractMapTool
         }
 
         Position position = event.getPosition();
-        if (position == null)
+        if (position == null || !this.isWorthEchoing(position))
         {
             return;
         }
 
         this.rubberBandEnd = position;
+        // No redraw request here. This callback runs inside WorldWindowGLAutoDrawable.display(), so asking for a
+        // repaint would schedule another frame, whose position callback would ask again: the globe would render
+        // flat out and the terrain would visibly ripple. The mouse events that move the cursor already trigger a
+        // redraw of their own, which is what puts the updated line on screen.
         this.updatePreview();
+    }
+
+    /**
+     * Indicates whether a new cursor position is far enough from the current rubber-band end to be worth rebuilding
+     * the preview. Sub-pixel jitter, which the terrain produces on its own as elevations settle, is ignored.
+     *
+     * @param position the candidate position.
+     *
+     * @return true when the preview should be rebuilt.
+     */
+    protected boolean isWorthEchoing(Position position)
+    {
+        if (this.rubberBandEnd == null)
+        {
+            return true;
+        }
+
+        double eyeAltitude = this.wwd.getView().getEyePosition() != null
+            ? Math.abs(this.wwd.getView().getEyePosition().getElevation()) : 0;
+        double threshold = Math.max(0.5, eyeAltitude * ECHO_ALTITUDE_FRACTION);
+        return this.computeDistanceMeters(this.rubberBandEnd, position) >= threshold;
     }
 
     protected void addVertex(Position position)
@@ -240,7 +269,6 @@ public class DistanceMeasureTool extends AbstractMapTool
         {
             this.previewLine.setVisible(false);
             this.previewLabel.getAttributes().setVisible(false);
-            this.wwd.redraw();
             return;
         }
 
@@ -254,7 +282,6 @@ public class DistanceMeasureTool extends AbstractMapTool
         {
             this.previewLine.setVisible(false);
             this.previewLabel.getAttributes().setVisible(false);
-            this.wwd.redraw();
             return;
         }
 
@@ -265,8 +292,6 @@ public class DistanceMeasureTool extends AbstractMapTool
         this.previewLabel.setPosition(midPosition(preview.get(preview.size() - 2), preview.get(preview.size() - 1)));
         this.previewLabel.setText(formatDistance(meters));
         this.previewLabel.getAttributes().setVisible(true);
-
-        this.wwd.redraw();
     }
 
     protected void finishMeasurement()

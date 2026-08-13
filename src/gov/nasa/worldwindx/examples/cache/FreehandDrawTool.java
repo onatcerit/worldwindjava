@@ -188,6 +188,8 @@ public class FreehandDrawTool extends AbstractMapTool
 
         if (this.appendPosition(new Position(position, 0), this.minimumSpacingMeters()))
         {
+            // Deliberately no redraw request: this callback runs inside the render loop, and asking for a repaint
+            // from here makes the globe render continuously and the terrain ripple.
             this.updatePreview();
         }
     }
@@ -240,7 +242,6 @@ public class FreehandDrawTool extends AbstractMapTool
         {
             this.previewLine.setVisible(false);
             this.previewLabel.getAttributes().setVisible(false);
-            this.wwd.redraw();
             return;
         }
 
@@ -250,8 +251,6 @@ public class FreehandDrawTool extends AbstractMapTool
         this.previewLabel.setPosition(this.stroke.get(this.stroke.size() - 1));
         this.previewLabel.setText(formatDistance(this.computePathLengthMeters(this.stroke)));
         this.previewLabel.getAttributes().setVisible(true);
-
-        this.wwd.redraw();
     }
 
     protected void finishDrawing()
