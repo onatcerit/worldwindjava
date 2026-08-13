@@ -27,15 +27,15 @@
  */
 package gov.nasa.worldwindx.examples.cache;
 
-import gov.nasa.worldwind.WorldWind;
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.event.PositionEvent;
+import gov.nasa.worldwind.geom.LatLon;
 import gov.nasa.worldwind.geom.Position;
 import gov.nasa.worldwind.render.BasicShapeAttributes;
 import gov.nasa.worldwind.render.GlobeAnnotation;
 import gov.nasa.worldwind.render.Material;
-import gov.nasa.worldwind.render.Path;
 import gov.nasa.worldwind.render.ShapeAttributes;
+import gov.nasa.worldwind.render.SurfacePolyline;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -65,7 +65,7 @@ public class DistanceMeasureTool extends AbstractMapTool
 {
     protected static final Color LINE_COLOR = new Color(30, 120, 220);
 
-    protected final Path previewPath;
+    protected final SurfacePolyline previewLine;
     protected final GlobeAnnotation previewLabel;
 
     protected final List<Position> vertices = new ArrayList<Position>();
@@ -73,20 +73,21 @@ public class DistanceMeasureTool extends AbstractMapTool
     protected Position pressPosition;
     protected Point pressScreenPoint;
     protected boolean measuring;
+    protected boolean pressStartedMeasurement;
 
     public DistanceMeasureTool(MapOverlayManager manager)
     {
         super(manager);
 
-        this.previewPath = createPath(LINE_COLOR, 3);
-        this.previewPath.setVisible(false);
+        this.previewLine = createLine(LINE_COLOR, 3);
+        this.previewLine.setVisible(false);
 
         this.previewLabel = new GlobeAnnotation("", Position.ZERO, createLabelAttributes(LINE_COLOR));
         this.previewLabel.setAlwaysOnTop(true);
         this.previewLabel.setPickEnabled(false);
         this.previewLabel.getAttributes().setVisible(false);
 
-        this.manager.getShapeLayer().addRenderable(this.previewPath);
+        this.manager.getShapeLayer().addRenderable(this.previewLine);
         this.manager.getShapeLayer().addRenderable(this.previewLabel);
     }
 
@@ -132,13 +133,29 @@ public class DistanceMeasureTool extends AbstractMapTool
 
         this.pressScreenPoint = e.getPoint();
         this.pressPosition = this.wwd.getCurrentPosition();
+
+        if (this.pressPosition != null)
+        {
+            // Start on the press, not on the release, so the line and its distance follow the cursor from the very
+            // first button-down instead of appearing only once the button comes back up.
+            this.pressStartedMeasurement = !this.measuring;
+            if (this.pressStartedMeasurement)
+            {
+                this.measuring = true;
+                this.vertices.clear();
+                this.vertices.add(this.pressPosition);
+            }
+            this.rubberBandEnd = this.pressPosition;
+            this.updatePreview();
+        }
+
         e.consume();
     }
 
     @Override
     public void mouseDragged(MouseEvent e)
     {
-        if (!this.armed || this.pressPosition == null || e.isConsumed())
+        if (!this.armed || !this.measuring || this.pressPosition == null || e.isConsumed())
         {
             return;
         }
@@ -164,28 +181,16 @@ public class DistanceMeasureTool extends AbstractMapTool
         boolean dragged = this.isDrag(this.pressScreenPoint, e.getPoint());
         Position endPoint = dragged && release != null ? release : this.pressPosition;
 
-        if (!this.measuring)
+        if (this.pressStartedMeasurement && !dragged)
         {
-            // First point of a new measurement. A drag completes it in one gesture; a plain click waits for the
-            // second click.
-            this.measuring = true;
-            this.vertices.clear();
-            this.vertices.add(this.pressPosition);
+            // Plain first click: keep the start point on the globe and wait for the closing click.
             this.rubberBandEnd = endPoint;
-
-            if (dragged && release != null)
-            {
-                this.addVertex(release);
-                this.finishMeasurement();
-            }
-            else
-            {
-                this.updatePreview();
-            }
+            this.updatePreview();
         }
         else
         {
-            // Second point closes the measurement, so measurements never chain into one endless line.
+            // Either the press-drag-release gesture or the second click. Two points always close a measurement, so
+            // they never chain into one growing line.
             this.addVertex(endPoint);
             this.finishMeasurement();
         }
@@ -233,7 +238,7 @@ public class DistanceMeasureTool extends AbstractMapTool
     {
         if (!this.measuring || this.vertices.isEmpty())
         {
-            this.previewPath.setVisible(false);
+            this.previewLine.setVisible(false);
             this.previewLabel.getAttributes().setVisible(false);
             this.wwd.redraw();
             return;
@@ -247,14 +252,14 @@ public class DistanceMeasureTool extends AbstractMapTool
 
         if (preview.size() < 2)
         {
-            this.previewPath.setVisible(false);
+            this.previewLine.setVisible(false);
             this.previewLabel.getAttributes().setVisible(false);
             this.wwd.redraw();
             return;
         }
 
-        this.previewPath.setPositions(preview);
-        this.previewPath.setVisible(true);
+        this.previewLine.setLocations(new ArrayList<LatLon>(preview));
+        this.previewLine.setVisible(true);
 
         double meters = this.computePathLengthMeters(preview);
         this.previewLabel.setPosition(midPosition(preview.get(preview.size() - 2), preview.get(preview.size() - 1)));
@@ -278,11 +283,9 @@ public class DistanceMeasureTool extends AbstractMapTool
 
         MapOverlay overlay = new MapOverlay(MapOverlay.MEASUREMENT, last);
 
-        Path path = createPath(LINE_COLOR, 3);
-        path.setPositions(positions);
-        path.setShowPositions(true);
-        path.setShowPositionsScale(4);
-        overlay.addRenderable(path);
+        SurfacePolyline line = createLine(LINE_COLOR, 3);
+        line.setLocations(new ArrayList<LatLon>(positions));
+        overlay.addRenderable(line);
 
         GlobeAnnotation label = new GlobeAnnotation(formatDistance(meters),
             midPosition(positions.get(positions.size() - 2), last), createLabelAttributes(LINE_COLOR));
@@ -300,18 +303,34 @@ public class DistanceMeasureTool extends AbstractMapTool
     protected void cancelInProgressWork()
     {
         this.measuring = false;
+        this.pressStartedMeasurement = false;
         this.vertices.clear();
         this.rubberBandEnd = null;
         this.pressPosition = null;
         this.pressScreenPoint = null;
-        this.previewPath.setVisible(false);
-        this.previewPath.setPositions(new ArrayList<Position>());
+        this.previewLine.setVisible(false);
+        this.previewLine.setLocations(new ArrayList<LatLon>());
         this.previewLabel.setText("");
         this.previewLabel.getAttributes().setVisible(false);
         this.wwd.redraw();
     }
 
-    protected static Path createPath(Color color, double width)
+    /**
+     * Builds the line used for measurements and drawings.
+     * <p>
+     * A surface shape is used rather than a terrain-following {@link gov.nasa.worldwind.render.Path}. A path with
+     * CLAMP_TO_GROUND and follow-terrain re-tessellates itself against the terrain every time its positions change, and
+     * the subdivision count grows as the eye descends, so echoing one under the cursor stalls rendering when zoomed in.
+     * A surface polyline is painted into the surface tiles instead: its cost is bounded by screen area, and the terrain
+     * can never hide it. WorldWind's own MeasureTool defaults to follow-terrain off for the same reason.
+     * </p>
+     *
+     * @param color line color.
+     * @param width line width in pixels.
+     *
+     * @return a line with no locations yet.
+     */
+    protected static SurfacePolyline createLine(Color color, double width)
     {
         ShapeAttributes attrs = new BasicShapeAttributes();
         attrs.setOutlineMaterial(new Material(color));
@@ -320,14 +339,8 @@ public class DistanceMeasureTool extends AbstractMapTool
         attrs.setDrawOutline(true);
         attrs.setDrawInterior(false);
 
-        Path path = new Path();
-        path.setAttributes(attrs);
-        path.setPathType(AVKey.GREAT_CIRCLE);
-        // Lay the line on the map so it drapes over hills instead of cutting through them. These two calls are the
-        // body of Path.setSurfacePath(true), spelled out because that convenience method does not exist in
-        // WorldWind 2.1.0.
-        path.setAltitudeMode(WorldWind.CLAMP_TO_GROUND);
-        path.setFollowTerrain(true);
-        return path;
+        SurfacePolyline line = new SurfacePolyline(attrs);
+        line.setPathType(AVKey.GREAT_CIRCLE);
+        return line;
     }
 }

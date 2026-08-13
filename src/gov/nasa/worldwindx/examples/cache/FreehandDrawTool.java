@@ -33,10 +33,10 @@ import gov.nasa.worldwind.geom.Position;
 import gov.nasa.worldwind.render.BasicShapeAttributes;
 import gov.nasa.worldwind.render.GlobeAnnotation;
 import gov.nasa.worldwind.render.Material;
-import gov.nasa.worldwind.render.Path;
 import gov.nasa.worldwind.render.Renderable;
 import gov.nasa.worldwind.render.ShapeAttributes;
 import gov.nasa.worldwind.render.SurfacePolygon;
+import gov.nasa.worldwind.render.SurfacePolyline;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -62,7 +62,7 @@ public class FreehandDrawTool extends AbstractMapTool
     /** Spacing between recorded vertices, as a fraction of the eye altitude. */
     protected static final double SPACING_ALTITUDE_FRACTION = 0.001;
 
-    protected final Path previewPath;
+    protected final SurfacePolyline previewLine;
     protected final GlobeAnnotation previewLabel;
     protected final List<Position> stroke = new ArrayList<Position>();
 
@@ -74,15 +74,15 @@ public class FreehandDrawTool extends AbstractMapTool
     {
         super(manager);
 
-        this.previewPath = DistanceMeasureTool.createPath(DRAW_COLOR, 3);
-        this.previewPath.setVisible(false);
+        this.previewLine = DistanceMeasureTool.createLine(DRAW_COLOR, 3);
+        this.previewLine.setVisible(false);
 
         this.previewLabel = new GlobeAnnotation("", Position.ZERO, createLabelAttributes(DRAW_COLOR));
         this.previewLabel.setAlwaysOnTop(true);
         this.previewLabel.setPickEnabled(false);
         this.previewLabel.getAttributes().setVisible(false);
 
-        this.manager.getShapeLayer().addRenderable(this.previewPath);
+        this.manager.getShapeLayer().addRenderable(this.previewLine);
         this.manager.getShapeLayer().addRenderable(this.previewLabel);
     }
 
@@ -238,14 +238,14 @@ public class FreehandDrawTool extends AbstractMapTool
     {
         if (this.stroke.size() < 2)
         {
-            this.previewPath.setVisible(false);
+            this.previewLine.setVisible(false);
             this.previewLabel.getAttributes().setVisible(false);
             this.wwd.redraw();
             return;
         }
 
-        this.previewPath.setPositions(new ArrayList<Position>(this.stroke));
-        this.previewPath.setVisible(true);
+        this.previewLine.setLocations(new ArrayList<LatLon>(this.stroke));
+        this.previewLine.setVisible(true);
 
         this.previewLabel.setPosition(this.stroke.get(this.stroke.size() - 1));
         this.previewLabel.setText(formatDistance(this.computePathLengthMeters(this.stroke)));
@@ -284,9 +284,9 @@ public class FreehandDrawTool extends AbstractMapTool
         }
         else
         {
-            Path path = DistanceMeasureTool.createPath(DRAW_COLOR, 3);
-            path.setPositions(positions);
-            shape = path;
+            SurfacePolyline line = DistanceMeasureTool.createLine(DRAW_COLOR, 3);
+            line.setLocations(new ArrayList<LatLon>(positions));
+            shape = line;
             text = "D" + this.nextDrawingNumber++ + "  " + formatDistance(lengthMeters);
         }
 
@@ -309,8 +309,8 @@ public class FreehandDrawTool extends AbstractMapTool
     {
         this.drawing = false;
         this.stroke.clear();
-        this.previewPath.setVisible(false);
-        this.previewPath.setPositions(new ArrayList<Position>());
+        this.previewLine.setVisible(false);
+        this.previewLine.setLocations(new ArrayList<LatLon>());
         this.previewLabel.setText("");
         this.previewLabel.getAttributes().setVisible(false);
         this.wwd.redraw();
