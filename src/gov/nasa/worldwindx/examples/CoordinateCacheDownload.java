@@ -169,7 +169,7 @@ public class CoordinateCacheDownload extends ApplicationTemplate
                 });
 
             this.measureButton = this.createStackButton("Measure Distance",
-                "Drag for a quick measurement, or click point by point and double-click to finish",
+                "Click once for the start point, move the mouse to see the distance, click again to finish",
                 new ActionListener()
                 {
                     public void actionPerformed(ActionEvent e)

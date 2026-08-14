@@ -45,18 +45,23 @@ import java.util.List;
 /**
  * Google Maps-style distance measuring that keeps as many measurements on the globe as the user wants.
  * <p>
- * While armed, one measurement takes two points and finishes on its own:
+ * While armed, one measurement takes exactly two clicks:
  * </p>
  * <ul>
- * <li>Click once to drop the start point, move the mouse to see the line and the running distance, then click again to
- * finish.</li>
- * <li>Or press, drag and release to do both in one gesture.</li>
+ * <li>Click once to drop the start point. The line then follows the cursor and the label shows the distance to it,
+ * updating as the mouse is moved around to pick the end.</li>
+ * <li>Click again to close the measurement. Dragging never closes one; only a second click does.</li>
  * <li>The right button abandons a measurement that has only its first point down.</li>
  * </ul>
  * <p>
- * A finished measurement stays on the globe with its total distance and a red delete button next to its last point.
- * The tool remains armed, so the next measurement starts on the very next click and measurements never chain into one
- * growing line.
+ * The distance is the geodesic distance between the two points, as the crow flies: it comes from the great-circle
+ * angle between their latitudes and longitudes and the globe radius there, so terrain relief does not enter into it.
+ * The line itself is drawn on the surface and so appears to ride over the ground between them.
+ * </p>
+ * <p>
+ * A finished measurement stays on the globe with its distance and a red delete button next to its end point. The tool
+ * remains armed, so the next measurement starts on the very next click and measurements never chain into one growing
+ * line.
  * </p>
  *
  * @author Cursor Agent
@@ -181,20 +186,21 @@ public class DistanceMeasureTool extends AbstractMapTool
         }
 
         Position release = this.wwd.getCurrentPosition();
-        boolean dragged = this.isDrag(this.pressScreenPoint, e.getPoint());
-        Position endPoint = dragged && release != null ? release : this.pressPosition;
+        // Take the point where the cursor ended up, so the measurement closes exactly where the echoed line was last
+        // drawn. How far the mouse travelled while the button was down does not matter: a measurement is two clicks,
+        // never a drag.
+        Position endPoint = release != null ? release : this.pressPosition;
 
-        if (this.pressStartedMeasurement && !dragged)
+        if (this.pressStartedMeasurement)
         {
-            // Plain first click: keep the start point on the globe and wait for the closing click.
+            // First click: the start point is down, now the line follows the cursor until the closing click.
             this.rubberBandEnd = endPoint;
             this.updatePreview();
             this.wwd.redraw();
         }
         else
         {
-            // Either the press-drag-release gesture or the second click. Two points always close a measurement, so
-            // they never chain into one growing line.
+            // Second click closes the measurement.
             this.addVertex(endPoint);
             this.finishMeasurement();
         }
