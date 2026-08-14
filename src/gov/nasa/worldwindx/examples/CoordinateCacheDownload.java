@@ -29,6 +29,9 @@ package gov.nasa.worldwindx.examples;
 
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.geom.Sector;
+import gov.nasa.worldwind.globes.ElevationModel;
+import gov.nasa.worldwind.globes.Globe;
+import gov.nasa.worldwind.terrain.ZeroElevationModel;
 import gov.nasa.worldwind.util.WWUtil;
 import gov.nasa.worldwindx.examples.cache.AbstractMapTool;
 import gov.nasa.worldwindx.examples.cache.CoordinateCacheDialog;
@@ -83,7 +86,9 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         protected JButton pointButton;
         protected JButton drawButton;
         protected JCheckBox closedShapeCheckBox;
+        protected JCheckBox flatTerrainCheckBox;
         protected JButton clearButton;
+        protected ElevationModel terrainElevationModel;
         protected JPanel buttonStack;
 
         public AppFrame()
@@ -204,6 +209,19 @@ public class CoordinateCacheDownload extends ApplicationTemplate
                 }
             });
 
+            this.flatTerrainCheckBox = new JCheckBox("Flat terrain", false);
+            this.flatTerrainCheckBox.setToolTipText(
+                "Replace the elevation model with a flat one. Use this if the terrain smears into streaks.");
+            this.flatTerrainCheckBox.setFocusable(false);
+            this.flatTerrainCheckBox.setOpaque(true);
+            this.flatTerrainCheckBox.addActionListener(new ActionListener()
+            {
+                public void actionPerformed(ActionEvent e)
+                {
+                    setFlatTerrain(flatTerrainCheckBox.isSelected());
+                }
+            });
+
             this.clearButton = this.createStackButton("Clear Map",
                 "Remove every measurement, point and drawing from the globe", new ActionListener()
                 {
@@ -218,7 +236,8 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             this.buttonStack.setLayout(new BoxLayout(this.buttonStack, BoxLayout.Y_AXIS));
 
             Component[] stackItems = new Component[] {this.coordinateButton, this.mapButton, this.measureButton,
-                this.pointButton, this.drawButton, this.closedShapeCheckBox, this.clearButton};
+                this.pointButton, this.drawButton, this.closedShapeCheckBox, this.flatTerrainCheckBox,
+                this.clearButton};
             for (int i = 0; i < stackItems.length; i++)
             {
                 if (i > 0)
@@ -340,6 +359,38 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             }
 
             tool.setArmed(arm);
+        }
+
+        /**
+         * Swaps the globe's elevation model for a flat one, and back.
+         * <p>
+         * The terrain tessellator drapes imagery over elevation tiles and hangs skirts off each tile edge to hide the
+         * cracks between them. A tile that arrives with extreme or missing elevations gives that skirt an enormous
+         * depth, and the imagery on it smears into long streaks across the view. Dropping the elevation model removes
+         * that whole class of artifact. Nothing here needs relief: distances are geodesic either way, and the imagery
+         * is what is being cached.
+         * </p>
+         *
+         * @param flat true to use a flat globe, false to restore the elevation model the globe started with.
+         */
+        protected void setFlatTerrain(boolean flat)
+        {
+            Globe globe = this.getWwd().getModel().getGlobe();
+
+            if (flat)
+            {
+                if (this.terrainElevationModel == null)
+                {
+                    this.terrainElevationModel = globe.getElevationModel();
+                }
+                globe.setElevationModel(new ZeroElevationModel());
+            }
+            else if (this.terrainElevationModel != null)
+            {
+                globe.setElevationModel(this.terrainElevationModel);
+            }
+
+            this.getWwd().redraw();
         }
 
         protected AbstractMapTool[] globeTools()
