@@ -92,6 +92,14 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         protected ElevationModel terrainElevationModel;
         protected JPanel buttonStack;
 
+        static
+        {
+            // Same reason as the colour box below: nothing lightweight survives being drawn over a heavyweight
+            // GLCanvas, so tooltips and menus have to be heavyweight too.
+            ToolTipManager.sharedInstance().setLightWeightPopupEnabled(false);
+            JPopupMenu.setDefaultLightWeightPopupEnabled(false);
+        }
+
         public AppFrame()
         {
             this.cacheController = new SectorCacheController(this.getWwd());
@@ -213,6 +221,11 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             this.drawColorBox = new JComboBox<DrawColor>(DrawColor.values());
             this.drawColorBox.setToolTipText("Colour for the next border. Borders already drawn keep their own.");
             this.drawColorBox.setFocusable(false);
+            // The button stack sits on the glass pane, above every other Swing layer, and the globe underneath is a
+            // heavyweight GLCanvas. A lightweight popup would be drawn into the layered pane below both and come out
+            // interleaved with the buttons. A heavyweight popup is its own window, so it lands on top and closes
+            // normally. WorldWindowGLCanvas documents this as the usual remedy for mixing Swing with its canvas.
+            this.drawColorBox.setLightWeightPopupEnabled(false);
             this.drawColorBox.setRenderer(new DrawColorRenderer());
             this.drawColorBox.addActionListener(new ActionListener()
             {
