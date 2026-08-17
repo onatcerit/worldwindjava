@@ -51,6 +51,8 @@ import java.util.List;
  * <li>Click once to drop the start point. The line then follows the cursor and the label shows the distance to it,
  * updating as the mouse is moved around to pick the end.</li>
  * <li>Click again to close the measurement. Dragging never closes one; only a second click does.</li>
+ * <li>Between the two clicks the line is drawn faint, so it reads as provisional beside the finished measurements
+ * around it, while its distance label stays fully legible.</li>
  * <li>The right button abandons a measurement that has only its first point down.</li>
  * </ul>
  * <p>
@@ -69,6 +71,10 @@ import java.util.List;
 public class DistanceMeasureTool extends AbstractMapTool
 {
     protected static final Color LINE_COLOR = new Color(30, 120, 220);
+    /** Opacity of a finished measurement's line. */
+    protected static final double FINISHED_OPACITY = 0.95;
+    /** Opacity of the line between the two clicks, faint enough to read as provisional but still plainly there. */
+    protected static final double PREVIEW_OPACITY = 0.4;
     /** Cursor movement below this fraction of the eye altitude does not rebuild the preview. */
     protected static final double ECHO_ALTITUDE_FRACTION = 0.0005;
 
@@ -86,7 +92,7 @@ public class DistanceMeasureTool extends AbstractMapTool
     {
         super(manager);
 
-        this.previewLine = createLine(LINE_COLOR, 3);
+        this.previewLine = createLine(LINE_COLOR, 3, PREVIEW_OPACITY);
         this.previewLine.setVisible(false);
 
         this.previewLabel = new GlobeAnnotation("", Position.ZERO, createLabelAttributes(LINE_COLOR));
@@ -314,7 +320,7 @@ public class DistanceMeasureTool extends AbstractMapTool
 
         MapOverlay overlay = new MapOverlay(MapOverlay.MEASUREMENT, last);
 
-        SurfacePolyline line = createLine(LINE_COLOR, 3);
+        SurfacePolyline line = createLine(LINE_COLOR, 3, FINISHED_OPACITY);
         line.setLocations(new ArrayList<LatLon>(positions));
         overlay.addRenderable(line);
 
@@ -363,10 +369,25 @@ public class DistanceMeasureTool extends AbstractMapTool
      */
     protected static SurfacePolyline createLine(Color color, double width)
     {
+        return createLine(color, width, FINISHED_OPACITY);
+    }
+
+    /**
+     * Builds a line at a chosen opacity, so a measurement being placed can read as provisional next to the finished
+     * ones around it.
+     *
+     * @param color   line color.
+     * @param width   line width in pixels.
+     * @param opacity 0 for invisible, 1 for solid.
+     *
+     * @return a line with no locations yet.
+     */
+    protected static SurfacePolyline createLine(Color color, double width, double opacity)
+    {
         ShapeAttributes attrs = new BasicShapeAttributes();
         attrs.setOutlineMaterial(new Material(color));
         attrs.setOutlineWidth(width);
-        attrs.setOutlineOpacity(0.95);
+        attrs.setOutlineOpacity(opacity);
         attrs.setDrawOutline(true);
         attrs.setDrawInterior(false);
 
