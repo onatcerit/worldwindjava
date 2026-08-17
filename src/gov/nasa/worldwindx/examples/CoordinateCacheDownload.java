@@ -86,6 +86,7 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         protected JButton pointButton;
         protected JButton drawButton;
         protected JCheckBox closedShapeCheckBox;
+        protected JComboBox<DrawColor> drawColorBox;
         protected JCheckBox flatTerrainCheckBox;
         protected JButton clearButton;
         protected ElevationModel terrainElevationModel;
@@ -209,6 +210,22 @@ public class CoordinateCacheDownload extends ApplicationTemplate
                 }
             });
 
+            this.drawColorBox = new JComboBox<DrawColor>(DrawColor.values());
+            this.drawColorBox.setToolTipText("Colour for the next border. Borders already drawn keep their own.");
+            this.drawColorBox.setFocusable(false);
+            this.drawColorBox.setRenderer(new DrawColorRenderer());
+            this.drawColorBox.addActionListener(new ActionListener()
+            {
+                public void actionPerformed(ActionEvent e)
+                {
+                    DrawColor choice = (DrawColor) drawColorBox.getSelectedItem();
+                    if (choice != null)
+                    {
+                        freehandDrawTool.setDrawColor(choice.color);
+                    }
+                }
+            });
+
             this.flatTerrainCheckBox = new JCheckBox("Flat terrain", false);
             this.flatTerrainCheckBox.setToolTipText(
                 "Replace the elevation model with a flat one. Use this if the terrain smears into streaks.");
@@ -236,8 +253,8 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             this.buttonStack.setLayout(new BoxLayout(this.buttonStack, BoxLayout.Y_AXIS));
 
             Component[] stackItems = new Component[] {this.coordinateButton, this.mapButton, this.measureButton,
-                this.pointButton, this.drawButton, this.closedShapeCheckBox, this.flatTerrainCheckBox,
-                this.clearButton};
+                this.pointButton, this.drawButton, this.closedShapeCheckBox, this.drawColorBox,
+                this.flatTerrainCheckBox, this.clearButton};
             for (int i = 0; i < stackItems.length; i++)
             {
                 if (i > 0)
@@ -475,6 +492,58 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         protected void openCacheDialogWithSector(Sector sector)
         {
             this.cacheDialog.openWithSector(sector);
+        }
+    }
+
+    /**
+     * Colours offered for borders. They are all high-chroma, because a border has to stay legible over satellite
+     * imagery, which is mostly greens, browns and greys.
+     */
+    public enum DrawColor
+    {
+        MAGENTA("Magenta", new Color(220, 60, 160)),
+        YELLOW("Yellow", new Color(250, 215, 40)),
+        CYAN("Cyan", new Color(40, 215, 230)),
+        RED("Red", new Color(235, 60, 50)),
+        ORANGE("Orange", new Color(255, 145, 30)),
+        WHITE("White", new Color(250, 250, 250));
+
+        protected final String label;
+        protected final Color color;
+
+        DrawColor(String label, Color color)
+        {
+            this.label = label;
+            this.color = color;
+        }
+
+        @Override
+        public String toString()
+        {
+            return this.label;
+        }
+    }
+
+    /** Paints each entry of the colour box in its own colour, so the list reads as a row of swatches. */
+    protected static class DrawColorRenderer extends DefaultListCellRenderer
+    {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected,
+            boolean cellHasFocus)
+        {
+            super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+
+            if (value instanceof DrawColor)
+            {
+                Color color = ((DrawColor) value).color;
+                this.setBackground(color);
+                // Dark text on light swatches, light text on dark ones, using the usual luminance weights.
+                double luminance = (0.299 * color.getRed() + 0.587 * color.getGreen() + 0.114 * color.getBlue()) / 255;
+                this.setForeground(luminance > 0.6 ? Color.BLACK : Color.WHITE);
+                this.setOpaque(true);
+            }
+
+            return this;
         }
     }
 

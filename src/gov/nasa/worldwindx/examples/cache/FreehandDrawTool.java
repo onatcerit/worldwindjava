@@ -56,7 +56,9 @@ import java.util.List;
  */
 public class FreehandDrawTool extends AbstractMapTool
 {
-    protected static final Color DRAW_COLOR = new Color(220, 60, 160);
+    /** Colour a drawing gets unless the caller picks another. */
+    public static final Color DEFAULT_DRAW_COLOR = new Color(220, 60, 160);
+    protected static final double LINE_WIDTH = 3;
     /** Upper bound on vertices per stroke, so a slow drag cannot build an unbounded shape. */
     protected static final int MAX_STROKE_POSITIONS = 4000;
     /** Spacing between recorded vertices, as a fraction of the eye altitude. */
@@ -69,15 +71,16 @@ public class FreehandDrawTool extends AbstractMapTool
     protected boolean drawing;
     protected boolean closed = true;
     protected int nextDrawingNumber = 1;
+    protected Color drawColor = DEFAULT_DRAW_COLOR;
 
     public FreehandDrawTool(MapOverlayManager manager)
     {
         super(manager);
 
-        this.previewLine = DistanceMeasureTool.createLine(DRAW_COLOR, 3);
+        this.previewLine = DistanceMeasureTool.createLine(this.drawColor, LINE_WIDTH);
         this.previewLine.setVisible(false);
 
-        this.previewLabel = new GlobeAnnotation("", Position.ZERO, createLabelAttributes(DRAW_COLOR));
+        this.previewLabel = new GlobeAnnotation("", Position.ZERO, createLabelAttributes(this.drawColor));
         this.previewLabel.setAlwaysOnTop(true);
         this.previewLabel.setPickEnabled(false);
         this.previewLabel.getAttributes().setVisible(false);
@@ -104,6 +107,38 @@ public class FreehandDrawTool extends AbstractMapTool
     public void setClosed(boolean closed)
     {
         this.closed = closed;
+    }
+
+    /**
+     * Returns the colour new drawings are given.
+     *
+     * @return the current drawing colour.
+     */
+    public Color getDrawColor()
+    {
+        return this.drawColor;
+    }
+
+    /**
+     * Sets the colour for drawings made from now on. Drawings already on the globe keep the colour they were made
+     * with, so several borders can be told apart.
+     *
+     * @param drawColor the new colour. Ignored when null.
+     */
+    public void setDrawColor(Color drawColor)
+    {
+        if (drawColor == null || drawColor.equals(this.drawColor))
+        {
+            return;
+        }
+
+        this.drawColor = drawColor;
+
+        // A surface shape only notices new attributes through setAttributes, which bumps the modified time that
+        // invalidates its cached tile. Editing the attributes it already holds would leave the old colour on screen.
+        this.previewLine.setAttributes(createLineAttributes(drawColor, LINE_WIDTH, 0.95));
+        this.previewLabel.getAttributes().setBorderColor(drawColor);
+        this.wwd.redraw();
     }
 
     /**
@@ -275,7 +310,7 @@ public class FreehandDrawTool extends AbstractMapTool
         {
             lengthMeters += this.computeDistanceMeters(positions.get(positions.size() - 1), first);
             SurfacePolygon polygon = new SurfacePolygon(new ArrayList<LatLon>(positions));
-            polygon.setAttributes(createAreaAttributes());
+            polygon.setAttributes(createAreaAttributes(this.drawColor));
             shape = polygon;
 
             double area = polygon.getArea(this.wwd.getModel().getGlobe());
@@ -283,7 +318,7 @@ public class FreehandDrawTool extends AbstractMapTool
         }
         else
         {
-            SurfacePolyline line = DistanceMeasureTool.createLine(DRAW_COLOR, 3);
+            SurfacePolyline line = DistanceMeasureTool.createLine(this.drawColor, LINE_WIDTH);
             line.setLocations(new ArrayList<LatLon>(positions));
             shape = line;
             text = "D" + this.nextDrawingNumber++ + "  " + formatDistance(lengthMeters);
@@ -291,7 +326,7 @@ public class FreehandDrawTool extends AbstractMapTool
 
         overlay.addRenderable(shape);
 
-        GlobeAnnotation label = new GlobeAnnotation(text, first, createLabelAttributes(DRAW_COLOR));
+        GlobeAnnotation label = new GlobeAnnotation(text, first, createLabelAttributes(this.drawColor));
         label.setAlwaysOnTop(true);
         label.setPickEnabled(false);
         label.getAttributes().setDrawOffset(new Point(0, -18));
@@ -315,15 +350,15 @@ public class FreehandDrawTool extends AbstractMapTool
         this.wwd.redraw();
     }
 
-    protected static ShapeAttributes createAreaAttributes()
+    protected static ShapeAttributes createAreaAttributes(Color color)
     {
         ShapeAttributes attrs = new BasicShapeAttributes();
         attrs.setDrawInterior(true);
-        attrs.setInteriorMaterial(new Material(DRAW_COLOR));
+        attrs.setInteriorMaterial(new Material(color));
         attrs.setInteriorOpacity(0.22);
         attrs.setDrawOutline(true);
-        attrs.setOutlineMaterial(new Material(DRAW_COLOR));
-        attrs.setOutlineWidth(3);
+        attrs.setOutlineMaterial(new Material(color));
+        attrs.setOutlineWidth(LINE_WIDTH);
         attrs.setOutlineOpacity(0.95);
         return attrs;
     }

@@ -36,6 +36,9 @@ import gov.nasa.worldwind.geom.Position;
 import gov.nasa.worldwind.globes.Globe;
 import gov.nasa.worldwind.pick.PickedObjectList;
 import gov.nasa.worldwind.render.AnnotationAttributes;
+import gov.nasa.worldwind.render.BasicShapeAttributes;
+import gov.nasa.worldwind.render.Material;
+import gov.nasa.worldwind.render.ShapeAttributes;
 
 import java.awt.*;
 import java.awt.event.MouseAdapter;
@@ -206,6 +209,31 @@ public abstract class AbstractMapTool extends MouseAdapter implements MouseMotio
     {
         LatLon mid = LatLon.interpolateGreatCircle(0.5, start, end);
         return new Position(mid, 0.5 * (start.getElevation() + end.getElevation()));
+    }
+
+    /**
+     * Builds outline-only attributes for a line.
+     * <p>
+     * Surface shapes cache their rendered tiles, and only {@code setAttributes} bumps the modified time that
+     * invalidates that cache. So a tool changing a line's colour must hand it a fresh attributes object built here,
+     * not edit the one it already holds.
+     * </p>
+     *
+     * @param color   line color.
+     * @param width   line width in pixels.
+     * @param opacity 0 for invisible, 1 for solid.
+     *
+     * @return attributes drawing an outline and no interior.
+     */
+    protected static ShapeAttributes createLineAttributes(Color color, double width, double opacity)
+    {
+        ShapeAttributes attrs = new BasicShapeAttributes();
+        attrs.setOutlineMaterial(new Material(color));
+        attrs.setOutlineWidth(width);
+        attrs.setOutlineOpacity(opacity);
+        attrs.setDrawOutline(true);
+        attrs.setDrawInterior(false);
+        return attrs;
     }
 
     /**

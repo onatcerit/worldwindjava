@@ -31,10 +31,7 @@ import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.event.PositionEvent;
 import gov.nasa.worldwind.geom.LatLon;
 import gov.nasa.worldwind.geom.Position;
-import gov.nasa.worldwind.render.BasicShapeAttributes;
 import gov.nasa.worldwind.render.GlobeAnnotation;
-import gov.nasa.worldwind.render.Material;
-import gov.nasa.worldwind.render.ShapeAttributes;
 import gov.nasa.worldwind.render.SurfacePolyline;
 
 import java.awt.*;
@@ -384,14 +381,7 @@ public class DistanceMeasureTool extends AbstractMapTool
      */
     protected static SurfacePolyline createLine(Color color, double width, double opacity)
     {
-        ShapeAttributes attrs = new BasicShapeAttributes();
-        attrs.setOutlineMaterial(new Material(color));
-        attrs.setOutlineWidth(width);
-        attrs.setOutlineOpacity(opacity);
-        attrs.setDrawOutline(true);
-        attrs.setDrawInterior(false);
-
-        SurfacePolyline line = new SurfacePolyline(attrs);
+        SurfacePolyline line = new SurfacePolyline(createLineAttributes(color, width, opacity));
         line.setPathType(AVKey.GREAT_CIRCLE);
         return line;
     }
