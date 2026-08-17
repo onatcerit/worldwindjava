@@ -31,9 +31,9 @@ import gov.nasa.worldwind.WorldWindow;
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.event.PositionEvent;
 import gov.nasa.worldwind.event.PositionListener;
-import gov.nasa.worldwind.geom.Angle;
 import gov.nasa.worldwind.geom.LatLon;
 import gov.nasa.worldwind.geom.Position;
+import gov.nasa.worldwind.globes.Globe;
 import gov.nasa.worldwind.pick.PickedObjectList;
 import gov.nasa.worldwind.render.AnnotationAttributes;
 
@@ -171,11 +171,25 @@ public abstract class AbstractMapTool extends MouseAdapter implements MouseMotio
             && pressPoint.distance(releasePoint) > DRAG_THRESHOLD_PIXELS;
     }
 
+    /**
+     * Returns the distance between two points as the crow flies, on the WGS84 ellipsoid.
+     * <p>
+     * This is Vincenty's inverse solution, which WorldWind ships as {@link LatLon#ellipsoidalDistance}. It reads only
+     * the two latitude/longitude pairs and the globe's two radii, so terrain relief never enters the figure and the
+     * answer does not change when the elevation model or the globe's projection changes. It replaces the earlier
+     * great-circle angle times radius-at-latitude, which is a spherical approximation and drifts from the true
+     * geodesic by up to about 0.3%, worst along east-west lines.
+     * </p>
+     *
+     * @param start first point.
+     * @param end   second point.
+     *
+     * @return the geodesic distance in meters.
+     */
     protected double computeDistanceMeters(LatLon start, LatLon end)
     {
-        Angle distance = LatLon.greatCircleDistance(start, end);
-        double radius = this.wwd.getModel().getGlobe().getRadiusAt(start.getLatitude(), start.getLongitude());
-        return distance.radians * radius;
+        Globe globe = this.wwd.getModel().getGlobe();
+        return LatLon.ellipsoidalDistance(start, end, globe.getEquatorialRadius(), globe.getPolarRadius());
     }
 
     protected double computePathLengthMeters(List<? extends LatLon> positions)

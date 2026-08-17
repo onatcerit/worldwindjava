@@ -54,9 +54,9 @@ import java.util.List;
  * <li>The right button abandons a measurement that has only its first point down.</li>
  * </ul>
  * <p>
- * The distance is the geodesic distance between the two points, as the crow flies: it comes from the great-circle
- * angle between their latitudes and longitudes and the globe radius there, so terrain relief does not enter into it.
- * The line itself is drawn on the surface and so appears to ride over the ground between them.
+ * The distance is the geodesic distance between the two points, as the crow flies, from Vincenty's inverse solution
+ * on the WGS84 ellipsoid. It reads only their latitudes and longitudes, so terrain relief does not enter into it. The
+ * line itself is drawn on the surface and so appears to ride over the ground between them.
  * </p>
  * <p>
  * A finished measurement stays on the globe with its distance and a red delete button next to its end point. The tool
