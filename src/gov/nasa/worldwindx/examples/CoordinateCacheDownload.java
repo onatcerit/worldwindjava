@@ -29,10 +29,17 @@ package gov.nasa.worldwindx.examples;
 
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.geom.Sector;
+import gov.nasa.worldwind.globes.ElevationModel;
+import gov.nasa.worldwind.globes.Globe;
+import gov.nasa.worldwind.terrain.ZeroElevationModel;
 import gov.nasa.worldwind.util.WWUtil;
+import gov.nasa.worldwindx.examples.cache.AbstractMapTool;
 import gov.nasa.worldwindx.examples.cache.CoordinateCacheDialog;
 import gov.nasa.worldwindx.examples.cache.DistanceMeasureTool;
+import gov.nasa.worldwindx.examples.cache.FreehandDrawTool;
+import gov.nasa.worldwindx.examples.cache.MapOverlayManager;
 import gov.nasa.worldwindx.examples.cache.MapSectorCacheTool;
+import gov.nasa.worldwindx.examples.cache.PointMarkerTool;
 import gov.nasa.worldwindx.examples.cache.SectorCacheController;
 
 import javax.swing.*;
@@ -43,15 +50,21 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 
 /**
- * Demonstrates sector cache download and Google Maps-style distance measuring.
+ * Demonstrates offline cache preparation together with the on-globe measuring, point and drawing tools.
  * <p>
  * Lower-left buttons provide:
  * </p>
  * <ul>
  * <li>Manual coordinate entry through {@link CoordinateCacheDialog}</li>
  * <li>Interactive map selection through {@link MapSectorCacheTool}</li>
- * <li>Distance measuring through {@link DistanceMeasureTool}</li>
+ * <li>Distance measuring through {@link DistanceMeasureTool}, several measurements at a time</li>
+ * <li>Point placement through {@link PointMarkerTool}</li>
+ * <li>Freehand border drawing through {@link FreehandDrawTool}</li>
  * </ul>
+ * <p>
+ * Everything placed on the globe carries its own red delete button, so items can be removed one by one without leaving
+ * the map. The Clear map button removes them all at once.
+ * </p>
  *
  * @author Cursor Agent
  */
@@ -62,11 +75,30 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         protected SectorCacheController cacheController;
         protected CoordinateCacheDialog cacheDialog;
         protected MapSectorCacheTool mapCacheTool;
+        protected MapOverlayManager overlayManager;
         protected DistanceMeasureTool distanceMeasureTool;
+        protected PointMarkerTool pointMarkerTool;
+        protected FreehandDrawTool freehandDrawTool;
+
         protected JButton coordinateButton;
         protected JButton mapButton;
         protected JButton measureButton;
+        protected JButton pointButton;
+        protected JButton drawButton;
+        protected JCheckBox closedShapeCheckBox;
+        protected JComboBox<DrawColor> drawColorBox;
+        protected JCheckBox flatTerrainCheckBox;
+        protected JButton clearButton;
+        protected ElevationModel terrainElevationModel;
         protected JPanel buttonStack;
+
+        static
+        {
+            // Same reason as the colour box below: nothing lightweight survives being drawn over a heavyweight
+            // GLCanvas, so tooltips and menus have to be heavyweight too.
+            ToolTipManager.sharedInstance().setLightWeightPopupEnabled(false);
+            JPopupMenu.setDefaultLightWeightPopupEnabled(false);
+        }
 
         public AppFrame()
         {
@@ -77,7 +109,7 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             {
                 public void run()
                 {
-                    updateMapButtonLabel();
+                    updateButtonLabels();
                 }
             });
             this.mapCacheTool.setSectorConsumer(new MapSectorCacheTool.SectorConsumer()
@@ -88,15 +120,32 @@ public class CoordinateCacheDownload extends ApplicationTemplate
                     AppFrame.this.openCacheDialogWithSector(sector);
                 }
             });
-            this.distanceMeasureTool = new DistanceMeasureTool(this.getWwd());
-            this.distanceMeasureTool.setArmedStateListener(new Runnable()
+
+            this.overlayManager = new MapOverlayManager(this.getWwd());
+            this.overlayManager.setChangeListener(new Runnable()
             {
                 public void run()
                 {
-                    updateMeasureButtonLabel();
+                    updateButtonLabels();
                 }
             });
+
+            Runnable armedListener = new Runnable()
+            {
+                public void run()
+                {
+                    updateButtonLabels();
+                }
+            };
+            this.distanceMeasureTool = new DistanceMeasureTool(this.overlayManager);
+            this.distanceMeasureTool.setArmedStateListener(armedListener);
+            this.pointMarkerTool = new PointMarkerTool(this.overlayManager);
+            this.pointMarkerTool.setArmedStateListener(armedListener);
+            this.freehandDrawTool = new FreehandDrawTool(this.overlayManager);
+            this.freehandDrawTool.setArmedStateListener(armedListener);
+
             this.installBottomLeftCacheButtons();
+            this.updateButtonLabels();
 
             Dimension size = new Dimension(1200, 800);
             this.setPreferredSize(size);
@@ -110,51 +159,126 @@ public class CoordinateCacheDownload extends ApplicationTemplate
          */
         protected void installBottomLeftCacheButtons()
         {
-            this.coordinateButton = new JButton("Cache by Coordinates");
-            this.coordinateButton.setToolTipText("Enter coordinates and download the area into the local cache");
-            this.coordinateButton.setFocusable(false);
-            this.coordinateButton.addActionListener(new ActionListener()
+            this.coordinateButton = this.createStackButton("Cache by Coordinates",
+                "Enter coordinates and download the area into the local cache", new ActionListener()
+                {
+                    public void actionPerformed(ActionEvent e)
+                    {
+                        openCoordinateDialog();
+                    }
+                });
+
+            this.mapButton = this.createStackButton("Cache from Map",
+                "Press, then drag on the globe; selected coordinates open in the cache dialog", new ActionListener()
+                {
+                    public void actionPerformed(ActionEvent e)
+                    {
+                        toggleMapSelection();
+                    }
+                });
+
+            this.measureButton = this.createStackButton("Measure Distance",
+                "Click once for the start point, move the mouse to see the distance, click again to finish",
+                new ActionListener()
+                {
+                    public void actionPerformed(ActionEvent e)
+                    {
+                        armTool(distanceMeasureTool);
+                    }
+                });
+
+            this.pointButton = this.createStackButton("Add Point",
+                "Click on the globe to drop numbered points", new ActionListener()
+                {
+                    public void actionPerformed(ActionEvent e)
+                    {
+                        armTool(pointMarkerTool);
+                    }
+                });
+
+            this.drawButton = this.createStackButton("Draw Border",
+                "Press and drag to sketch freehand, like drawing with a pen", new ActionListener()
+                {
+                    public void actionPerformed(ActionEvent e)
+                    {
+                        armTool(freehandDrawTool);
+                    }
+                });
+
+            this.closedShapeCheckBox = new JCheckBox("Close the shape", true);
+            this.closedShapeCheckBox.setToolTipText(
+                "Join the last point back to the first, turning the sketch into a filled border");
+            this.closedShapeCheckBox.setFocusable(false);
+            this.closedShapeCheckBox.setOpaque(true);
+            this.closedShapeCheckBox.addActionListener(new ActionListener()
             {
                 public void actionPerformed(ActionEvent e)
                 {
-                    openCoordinateDialog();
+                    freehandDrawTool.setClosed(closedShapeCheckBox.isSelected());
                 }
             });
 
-            this.mapButton = new JButton("Cache from Map");
-            this.mapButton.setToolTipText(
-                "Press, then drag on the globe; selected coordinates open in the cache dialog");
-            this.mapButton.setFocusable(false);
-            this.mapButton.addActionListener(new ActionListener()
+            this.drawColorBox = new JComboBox<DrawColor>(DrawColor.values());
+            this.drawColorBox.setToolTipText("Colour for the next border. Borders already drawn keep their own.");
+            this.drawColorBox.setFocusable(false);
+            // The button stack sits on the glass pane, above every other Swing layer, and the globe underneath is a
+            // heavyweight GLCanvas. A lightweight popup would be drawn into the layered pane below both and come out
+            // interleaved with the buttons. A heavyweight popup is its own window, so it lands on top and closes
+            // normally. WorldWindowGLCanvas documents this as the usual remedy for mixing Swing with its canvas.
+            this.drawColorBox.setLightWeightPopupEnabled(false);
+            this.drawColorBox.setRenderer(new DrawColorRenderer());
+            this.drawColorBox.addActionListener(new ActionListener()
             {
                 public void actionPerformed(ActionEvent e)
                 {
-                    toggleMapSelection();
+                    DrawColor choice = (DrawColor) drawColorBox.getSelectedItem();
+                    if (choice != null)
+                    {
+                        freehandDrawTool.setDrawColor(choice.color);
+                    }
                 }
             });
 
-            this.measureButton = new JButton("Measure Distance");
-            this.measureButton.setToolTipText("Press, then drag on the globe to measure distance from the start point");
-            this.measureButton.setFocusable(false);
-            this.measureButton.addActionListener(new ActionListener()
+            this.flatTerrainCheckBox = new JCheckBox("Flat terrain", false);
+            this.flatTerrainCheckBox.setToolTipText(
+                "Replace the elevation model with a flat one. Use this if the terrain smears into streaks.");
+            this.flatTerrainCheckBox.setFocusable(false);
+            this.flatTerrainCheckBox.setOpaque(true);
+            this.flatTerrainCheckBox.addActionListener(new ActionListener()
             {
                 public void actionPerformed(ActionEvent e)
                 {
-                    toggleDistanceMeasure();
+                    setFlatTerrain(flatTerrainCheckBox.isSelected());
                 }
             });
+
+            this.clearButton = this.createStackButton("Clear Map",
+                "Remove every measurement, point and drawing from the globe", new ActionListener()
+                {
+                    public void actionPerformed(ActionEvent e)
+                    {
+                        clearMapItems();
+                    }
+                });
 
             this.buttonStack = new JPanel();
             this.buttonStack.setOpaque(false);
             this.buttonStack.setLayout(new BoxLayout(this.buttonStack, BoxLayout.Y_AXIS));
-            this.coordinateButton.setAlignmentX(Component.LEFT_ALIGNMENT);
-            this.mapButton.setAlignmentX(Component.LEFT_ALIGNMENT);
-            this.measureButton.setAlignmentX(Component.LEFT_ALIGNMENT);
-            this.buttonStack.add(this.coordinateButton);
-            this.buttonStack.add(Box.createVerticalStrut(6));
-            this.buttonStack.add(this.mapButton);
-            this.buttonStack.add(Box.createVerticalStrut(6));
-            this.buttonStack.add(this.measureButton);
+
+            Component[] stackItems = new Component[] {this.coordinateButton, this.mapButton, this.measureButton,
+                this.pointButton, this.drawButton, this.closedShapeCheckBox, this.drawColorBox,
+                this.flatTerrainCheckBox, this.clearButton};
+            for (int i = 0; i < stackItems.length; i++)
+            {
+                if (i > 0)
+                {
+                    this.buttonStack.add(Box.createVerticalStrut(6));
+                }
+                stackItems[i].setMaximumSize(
+                    new Dimension(Integer.MAX_VALUE, stackItems[i].getPreferredSize().height));
+                ((JComponent) stackItems[i]).setAlignmentX(Component.LEFT_ALIGNMENT);
+                this.buttonStack.add(stackItems[i]);
+            }
 
             final JPanel glass = new JPanel(null)
             {
@@ -201,6 +325,15 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             });
         }
 
+        protected JButton createStackButton(String text, String toolTip, ActionListener listener)
+        {
+            JButton button = new JButton(text);
+            button.setToolTipText(toolTip);
+            button.setFocusable(false);
+            button.addActionListener(listener);
+            return button;
+        }
+
         protected boolean isInsideButtonStack(Component glass, int x, int y)
         {
             if (this.buttonStack == null || !this.buttonStack.isShowing())
@@ -234,27 +367,95 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             glass.repaint();
         }
 
+        /**
+         * Arms one globe tool and disarms everything else, so a click on the globe only ever means one thing.
+         *
+         * @param tool the tool to toggle. Passing an already armed tool disarms it.
+         */
+        protected void armTool(AbstractMapTool tool)
+        {
+            boolean arm = !tool.isArmed();
+
+            if (this.mapCacheTool.isSelecting())
+            {
+                this.mapCacheTool.cancelSelection();
+            }
+            for (AbstractMapTool other : this.globeTools())
+            {
+                if (other != tool)
+                {
+                    other.setArmed(false);
+                }
+            }
+
+            tool.setArmed(arm);
+        }
+
+        /**
+         * Swaps the globe's elevation model for a flat one, and back.
+         * <p>
+         * The terrain tessellator drapes imagery over elevation tiles and hangs skirts off each tile edge to hide the
+         * cracks between them. A tile that arrives with extreme or missing elevations gives that skirt an enormous
+         * depth, and the imagery on it smears into long streaks across the view. Dropping the elevation model removes
+         * that whole class of artifact. Nothing here needs relief: distances are geodesic either way, and the imagery
+         * is what is being cached.
+         * </p>
+         *
+         * @param flat true to use a flat globe, false to restore the elevation model the globe started with.
+         */
+        protected void setFlatTerrain(boolean flat)
+        {
+            Globe globe = this.getWwd().getModel().getGlobe();
+
+            if (flat)
+            {
+                if (this.terrainElevationModel == null)
+                {
+                    this.terrainElevationModel = globe.getElevationModel();
+                }
+                globe.setElevationModel(new ZeroElevationModel());
+            }
+            else if (this.terrainElevationModel != null)
+            {
+                globe.setElevationModel(this.terrainElevationModel);
+            }
+
+            this.getWwd().redraw();
+        }
+
+        protected AbstractMapTool[] globeTools()
+        {
+            return new AbstractMapTool[] {this.distanceMeasureTool, this.pointMarkerTool, this.freehandDrawTool};
+        }
+
+        protected void disarmGlobeTools()
+        {
+            for (AbstractMapTool tool : this.globeTools())
+            {
+                tool.setArmed(false);
+            }
+        }
+
         protected void toggleMapSelection()
         {
-            if (!this.mapCacheTool.isSelecting() && this.distanceMeasureTool.isArmed())
+            if (!this.mapCacheTool.isSelecting())
             {
-                this.distanceMeasureTool.setArmed(false);
+                this.disarmGlobeTools();
             }
             this.mapCacheTool.toggleSelection();
         }
 
-        protected void toggleDistanceMeasure()
+        protected void clearMapItems()
         {
-            if (!this.distanceMeasureTool.isArmed() && this.mapCacheTool.isSelecting())
-            {
-                this.mapCacheTool.cancelSelection();
-            }
-            this.distanceMeasureTool.toggleArmed();
+            this.disarmGlobeTools();
+            this.overlayManager.removeOverlays(null);
+            this.pointMarkerTool.clearPoints();
+            this.freehandDrawTool.clearDrawings();
         }
 
-        protected void updateMapButtonLabel()
+        protected void updateButtonLabels()
         {
-            if (this.mapButton == null || this.mapCacheTool == null)
+            if (this.mapButton == null)
             {
                 return;
             }
@@ -270,26 +471,14 @@ public class CoordinateCacheDownload extends ApplicationTemplate
                 this.mapButton.setToolTipText(
                     "Press, then drag on the globe; selected coordinates open in the cache dialog");
             }
-        }
 
-        protected void updateMeasureButtonLabel()
-        {
-            if (this.measureButton == null || this.distanceMeasureTool == null)
-            {
-                return;
-            }
-
-            if (this.distanceMeasureTool.isArmed())
-            {
-                this.measureButton.setText("Cancel Measure");
-                this.measureButton.setToolTipText("Cancel distance measuring");
-            }
-            else
-            {
-                this.measureButton.setText("Measure Distance");
-                this.measureButton.setToolTipText(
-                    "Press, then drag on the globe to measure distance from the start point");
-            }
+            this.measureButton.setText(this.distanceMeasureTool.isArmed()
+                ? "Stop Measuring" : "Measure Distance (" + this.distanceMeasureTool.getMeasurementCount() + ")");
+            this.pointButton.setText(this.pointMarkerTool.isArmed()
+                ? "Stop Adding Points" : "Add Point (" + this.pointMarkerTool.getPointCount() + ")");
+            this.drawButton.setText(this.freehandDrawTool.isArmed()
+                ? "Stop Drawing" : "Draw Border (" + this.freehandDrawTool.getDrawingCount() + ")");
+            this.clearButton.setEnabled(this.overlayManager.getOverlayCount() > 0);
         }
 
         protected void openCoordinateDialog()
@@ -298,10 +487,7 @@ public class CoordinateCacheDownload extends ApplicationTemplate
             {
                 this.mapCacheTool.cancelSelection();
             }
-            if (this.distanceMeasureTool.isArmed())
-            {
-                this.distanceMeasureTool.setArmed(false);
-            }
+            this.disarmGlobeTools();
 
             if (!this.cacheDialog.isVisible())
             {
@@ -319,6 +505,58 @@ public class CoordinateCacheDownload extends ApplicationTemplate
         protected void openCacheDialogWithSector(Sector sector)
         {
             this.cacheDialog.openWithSector(sector);
+        }
+    }
+
+    /**
+     * Colours offered for borders. They are all high-chroma, because a border has to stay legible over satellite
+     * imagery, which is mostly greens, browns and greys.
+     */
+    public enum DrawColor
+    {
+        MAGENTA("Magenta", new Color(220, 60, 160)),
+        YELLOW("Yellow", new Color(250, 215, 40)),
+        CYAN("Cyan", new Color(40, 215, 230)),
+        RED("Red", new Color(235, 60, 50)),
+        ORANGE("Orange", new Color(255, 145, 30)),
+        WHITE("White", new Color(250, 250, 250));
+
+        protected final String label;
+        protected final Color color;
+
+        DrawColor(String label, Color color)
+        {
+            this.label = label;
+            this.color = color;
+        }
+
+        @Override
+        public String toString()
+        {
+            return this.label;
+        }
+    }
+
+    /** Paints each entry of the colour box in its own colour, so the list reads as a row of swatches. */
+    protected static class DrawColorRenderer extends DefaultListCellRenderer
+    {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected,
+            boolean cellHasFocus)
+        {
+            super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+
+            if (value instanceof DrawColor)
+            {
+                Color color = ((DrawColor) value).color;
+                this.setBackground(color);
+                // Dark text on light swatches, light text on dark ones, using the usual luminance weights.
+                double luminance = (0.299 * color.getRed() + 0.587 * color.getGreen() + 0.114 * color.getBlue()) / 255;
+                this.setForeground(luminance > 0.6 ? Color.BLACK : Color.WHITE);
+                this.setOpaque(true);
+            }
+
+            return this;
         }
     }
 

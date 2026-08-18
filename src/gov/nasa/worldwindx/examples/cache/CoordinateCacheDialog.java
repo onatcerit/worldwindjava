@@ -38,6 +38,8 @@ import gov.nasa.worldwind.util.WWMath;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.TitledBorder;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -50,14 +52,18 @@ import java.util.List;
 /**
  * Dialog that lets the user type geographic bounds and download that sector into the WorldWind cache.
  * <p>
- * This is the manual-entry path for offline cache preparation. Interactive map selection can later call the same
- * {@link SectorCacheController} with a sector produced by a selector.
+ * This is the manual-entry path for offline cache preparation, and it is also where an interactively selected sector
+ * ends up: {@code CoordinateCacheDownload} passes the sector drawn on the globe to {@link #openWithSector(Sector)} so
+ * both entry points share one download panel.
  * </p>
  *
  * @author Cursor Agent
  */
 public class CoordinateCacheDialog extends JDialog
 {
+    /** Highest cache folder name offered by the zoom spinners. */
+    protected static final int MAX_SELECTABLE_LEVEL = 22;
+
     protected final SectorCacheController controller;
     protected Sector currentSector;
 
@@ -72,6 +78,7 @@ public class CoordinateCacheDialog extends JDialog
     protected JPanel retrievablesPanel;
     protected JPanel monitorPanel;
     protected JButton startButton;
+    protected JButton clearButton;
     protected final List<RetrievableRow> rows = new ArrayList<RetrievableRow>();
 
     public CoordinateCacheDialog(Frame owner, SectorCacheController controller)
@@ -94,7 +101,7 @@ public class CoordinateCacheDialog extends JDialog
 
         this.buildUi();
         this.pack();
-        this.setMinimumSize(new Dimension(420, 480));
+        this.setMinimumSize(new Dimension(520, 620));
         this.setLocationRelativeTo(owner);
     }
 
@@ -151,8 +158,20 @@ public class CoordinateCacheDialog extends JDialog
         this.maxLatField = new JTextField("39.0");
         this.minLonField = new JTextField("32.0");
         this.maxLonField = new JTextField("33.0");
-        this.minLevelSpinner = new JSpinner(new SpinnerNumberModel(SectorCacheController.DEFAULT_MIN_LEVEL, 0, 22, 1));
-        this.maxLevelSpinner = new JSpinner(new SpinnerNumberModel(SectorCacheController.DEFAULT_MAX_LEVEL, 0, 22, 1));
+        this.minLevelSpinner = new JSpinner(new SpinnerNumberModel(SectorCacheController.DEFAULT_MIN_LEVEL, 0,
+            MAX_SELECTABLE_LEVEL, 1));
+        this.maxLevelSpinner = new JSpinner(new SpinnerNumberModel(SectorCacheController.DEFAULT_MAX_LEVEL, 0,
+            MAX_SELECTABLE_LEVEL, 1));
+
+        ChangeListener levelListener = new ChangeListener()
+        {
+            public void stateChanged(ChangeEvent e)
+            {
+                levelRangeChanged();
+            }
+        };
+        this.minLevelSpinner.addChangeListener(levelListener);
+        this.maxLevelSpinner.addChangeListener(levelListener);
 
         int row = 0;
         this.addLabeledField(panel, c, row++, "Min latitude (S):", this.minLatField);
@@ -164,7 +183,7 @@ public class CoordinateCacheDialog extends JDialog
         c.gridy = row;
         c.gridwidth = 1;
         c.weightx = 0;
-        panel.add(new JLabel("Min cache folder (zoom):"), c);
+        panel.add(new JLabel("Min zoom (cache folder):"), c);
         c.gridx = 1;
         c.weightx = 1;
         panel.add(this.minLevelSpinner, c);
@@ -173,7 +192,7 @@ public class CoordinateCacheDialog extends JDialog
         c.gridx = 0;
         c.gridy = row;
         c.weightx = 0;
-        panel.add(new JLabel("Max cache folder (zoom):"), c);
+        panel.add(new JLabel("Max zoom (cache folder):"), c);
         c.gridx = 1;
         c.weightx = 1;
         panel.add(this.maxLevelSpinner, c);
@@ -221,8 +240,10 @@ public class CoordinateCacheDialog extends JDialog
         center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
 
         JPanel cachePanel = new JPanel(new BorderLayout(5, 5));
-        cachePanel.setBorder(new TitledBorder("Cache"));
-        this.cacheLocationLabel = new JLabel("Default WorldWind cache");
+        cachePanel.setBorder(new TitledBorder("Cache folder"));
+        this.cacheLocationLabel = new JLabel(this.controller.getCacheWriteLocation());
+        this.cacheLocationLabel.setToolTipText(
+            "Tiles are written here, under each layer's own folder (for example Earth\\Bing\\9)");
         JButton browseButton = new JButton("...");
         browseButton.setToolTipText("Choose a custom cache directory");
         browseButton.addActionListener(new ActionListener()
@@ -243,7 +264,7 @@ public class CoordinateCacheDialog extends JDialog
         this.populateRetrievableRows();
 
         JScrollPane listScroll = new JScrollPane(this.retrievablesPanel);
-        listScroll.setPreferredSize(new Dimension(380, 160));
+        listScroll.setPreferredSize(new Dimension(480, 190));
         center.add(listScroll);
 
         this.monitorPanel = new JPanel();
@@ -252,7 +273,7 @@ public class CoordinateCacheDialog extends JDialog
         JPanel monitorWrapper = new JPanel(new BorderLayout());
         monitorWrapper.add(this.monitorPanel, BorderLayout.NORTH);
         JScrollPane monitorScroll = new JScrollPane(monitorWrapper);
-        monitorScroll.setPreferredSize(new Dimension(380, 140));
+        monitorScroll.setPreferredSize(new Dimension(480, 180));
         center.add(monitorScroll);
 
         return center;
@@ -271,6 +292,17 @@ public class CoordinateCacheDialog extends JDialog
             }
         });
 
+        this.clearButton = new JButton("Clear");
+        this.clearButton.setToolTipText("Remove finished downloads from this list. The cached tiles are kept.");
+        this.clearButton.setEnabled(false);
+        this.clearButton.addActionListener(new ActionListener()
+        {
+            public void actionPerformed(ActionEvent e)
+            {
+                clearFinishedDownloads();
+            }
+        });
+
         JButton closeButton = new JButton("Close");
         closeButton.addActionListener(new ActionListener()
         {
@@ -281,8 +313,54 @@ public class CoordinateCacheDialog extends JDialog
         });
 
         panel.add(this.startButton);
+        panel.add(this.clearButton);
         panel.add(closeButton);
         return panel;
+    }
+
+    /**
+     * Drops every finished row from the Downloads list. Only the list entry goes away; the tiles stay in the cache.
+     */
+    protected void clearFinishedDownloads()
+    {
+        for (Component component : this.monitorPanel.getComponents())
+        {
+            if (component instanceof DownloadMonitorPanel)
+            {
+                DownloadMonitorPanel monitor = (DownloadMonitorPanel) component;
+                if (!monitor.thread.isAlive())
+                {
+                    monitor.dispose();
+                    this.monitorPanel.remove(monitor);
+                }
+            }
+        }
+
+        this.monitorPanel.revalidate();
+        this.monitorPanel.repaint();
+        this.updateClearButton();
+    }
+
+    /** Enables the Clear button only while there is a finished row to clear. */
+    protected void updateClearButton()
+    {
+        if (this.clearButton == null)
+        {
+            return;
+        }
+
+        boolean anyFinished = false;
+        for (Component component : this.monitorPanel.getComponents())
+        {
+            if (component instanceof DownloadMonitorPanel
+                && !((DownloadMonitorPanel) component).thread.isAlive())
+            {
+                anyFinished = true;
+                break;
+            }
+        }
+
+        this.clearButton.setEnabled(anyFinished);
     }
 
     protected void populateRetrievableRows()
@@ -313,10 +391,30 @@ public class CoordinateCacheDialog extends JDialog
             if (file != null)
             {
                 this.controller.setCache(new BasicDataFileStore(file));
-                this.cacheLocationLabel.setText(file.getPath());
+                this.cacheLocationLabel.setText(this.controller.getCacheWriteLocation());
                 this.updateRetrievableEstimates();
             }
         }
+    }
+
+    /** Keeps the controller, the sector caption and the per-source folder captions in step with the spinners. */
+    protected void levelRangeChanged()
+    {
+        try
+        {
+            this.applyLevelRangeFromSpinners();
+        }
+        catch (IllegalArgumentException ignore)
+        {
+            // Reported when the user presses Apply sector or Start download; do not nag on every spinner click.
+            return;
+        }
+
+        if (this.currentSector != null)
+        {
+            this.sectorLabel.setText(this.describeCurrentSector());
+        }
+        this.updateRetrievableEstimates();
     }
 
     protected void applySectorFromFields()
@@ -331,8 +429,7 @@ public class CoordinateCacheDialog extends JDialog
 
             this.currentSector = SectorCacheController.sectorFromDegrees(minLat, maxLat, minLon, maxLon);
             this.controller.showSectorPreview(this.currentSector);
-            this.sectorLabel.setText(SectorCacheController.makeSectorDescription(this.currentSector)
-                + String.format("  |  zoom %d-%d", this.controller.getMinLevel(), this.controller.getMaxLevel()));
+            this.sectorLabel.setText(this.describeCurrentSector());
             this.startButton.setEnabled(true);
             this.updateRetrievableEstimates();
         }
@@ -345,6 +442,12 @@ public class CoordinateCacheDialog extends JDialog
             this.updateRetrievableEstimates();
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid coordinates", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    protected String describeCurrentSector()
+    {
+        return SectorCacheController.makeSectorDescription(this.currentSector)
+            + String.format("  |  zoom %d-%d", this.controller.getMinLevel(), this.controller.getMaxLevel());
     }
 
     protected double parseDegree(String text, String fieldName)
@@ -368,6 +471,7 @@ public class CoordinateCacheDialog extends JDialog
     {
         for (RetrievableRow row : this.rows)
         {
+            row.updateDescription();
             row.updateEstimate(this.currentSector);
         }
     }
@@ -429,7 +533,8 @@ public class CoordinateCacheDialog extends JDialog
 
         for (BulkRetrievalThread thread : threads)
         {
-            this.monitorPanel.add(new DownloadMonitorPanel(thread));
+            this.monitorPanel.add(new DownloadMonitorPanel(thread,
+                this.controller.describeRetrievable(thread.getRetrievable())));
         }
         this.monitorPanel.revalidate();
         this.monitorPanel.repaint();
@@ -486,17 +591,27 @@ public class CoordinateCacheDialog extends JDialog
         protected final BulkRetrievable retrievable;
         protected final JCheckBox checkBox;
         protected final JLabel sizeLabel;
+        protected final JLabel targetLabel;
         protected Thread estimateThread;
 
         RetrievableRow(BulkRetrievable retrievable)
         {
             super(new BorderLayout(6, 0));
             this.retrievable = retrievable;
-            this.setBorder(new EmptyBorder(2, 4, 2, 4));
+            this.setBorder(new EmptyBorder(3, 4, 3, 4));
             this.checkBox = new JCheckBox(retrievable.getName());
             this.sizeLabel = new JLabel("-");
-            this.add(this.checkBox, BorderLayout.CENTER);
-            this.add(this.sizeLabel, BorderLayout.EAST);
+            this.targetLabel = new JLabel(" ");
+            this.targetLabel.setFont(this.targetLabel.getFont().deriveFont(Font.PLAIN, 11f));
+            this.targetLabel.setForeground(new Color(90, 90, 90));
+            this.targetLabel.setBorder(new EmptyBorder(0, 22, 0, 0));
+
+            JPanel top = new JPanel(new BorderLayout(6, 0));
+            top.add(this.checkBox, BorderLayout.CENTER);
+            top.add(this.sizeLabel, BorderLayout.EAST);
+
+            this.add(top, BorderLayout.CENTER);
+            this.add(this.targetLabel, BorderLayout.SOUTH);
 
             this.checkBox.addActionListener(new ActionListener()
             {
@@ -505,11 +620,21 @@ public class CoordinateCacheDialog extends JDialog
                     updateEstimate(currentSector);
                 }
             });
+
+            this.updateDescription();
         }
 
         boolean isSelected()
         {
             return this.checkBox.isSelected();
+        }
+
+        /** Refreshes the caption showing which cache folders this source will write. */
+        void updateDescription()
+        {
+            String description = controller.describeRetrievable(this.retrievable);
+            this.targetLabel.setText(description);
+            this.targetLabel.setToolTipText(controller.getCacheWriteLocation() + " - " + description);
         }
 
         void updateEstimate(final Sector sector)
@@ -545,60 +670,71 @@ public class CoordinateCacheDialog extends JDialog
         }
     }
 
+    /**
+     * One row in the Downloads list.
+     * <p>
+     * The bar is driven by the tile counts the downloader publishes: current count over total count. Those counts are
+     * monotonic and the total is known as soon as the thread starts, so the bar climbs steadily instead of sitting at
+     * zero until the thread ends.
+     * </p>
+     */
     protected class DownloadMonitorPanel extends JPanel
     {
+        protected static final int UPDATE_INTERVAL_MILLIS = 400;
+
         protected final BulkRetrievalThread thread;
+        protected final String targetDescription;
         protected final JLabel descriptionLabel;
+        protected final JLabel detailLabel;
         protected final JProgressBar progressBar;
         protected final JButton cancelButton;
         protected final Timer updateTimer;
-        protected long fixedTotalSize = -1;
-        protected long fixedTotalCount = -1;
+        protected boolean cancelled;
+        protected boolean finished;
 
-        DownloadMonitorPanel(BulkRetrievalThread thread)
+        DownloadMonitorPanel(BulkRetrievalThread thread, String targetDescription)
         {
             super();
             this.thread = thread;
+            this.targetDescription = targetDescription != null ? targetDescription : "";
             this.setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
-            this.setBorder(new EmptyBorder(4, 4, 4, 4));
+            this.setBorder(new EmptyBorder(5, 4, 5, 4));
 
             this.descriptionLabel = new JLabel(thread.getRetrievable().getName());
+            this.descriptionLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+            this.detailLabel = new JLabel(this.targetDescription);
+            this.detailLabel.setFont(this.detailLabel.getFont().deriveFont(Font.PLAIN, 11f));
+            this.detailLabel.setForeground(new Color(90, 90, 90));
+            this.detailLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
             this.progressBar = new JProgressBar(0, 100);
             this.progressBar.setStringPainted(true);
             this.progressBar.setString("0%");
+            this.progressBar.setForeground(new Color(0, 160, 0));
+
             this.cancelButton = new JButton("Cancel");
             this.cancelButton.setBackground(Color.RED);
             this.cancelButton.addActionListener(new ActionListener()
             {
                 public void actionPerformed(ActionEvent e)
                 {
-                    if (DownloadMonitorPanel.this.thread.isAlive())
-                    {
-                        cancel();
-                    }
-                    else
-                    {
-                        Container parent = getParent();
-                        if (parent != null)
-                        {
-                            parent.remove(DownloadMonitorPanel.this);
-                            parent.revalidate();
-                            parent.repaint();
-                        }
-                    }
+                    cancel();
                 }
             });
 
             JPanel progressRow = new JPanel();
             progressRow.setLayout(new BoxLayout(progressRow, BoxLayout.X_AXIS));
+            progressRow.setAlignmentX(Component.LEFT_ALIGNMENT);
             progressRow.add(this.progressBar);
             progressRow.add(Box.createHorizontalStrut(8));
             progressRow.add(this.cancelButton);
 
             this.add(this.descriptionLabel);
+            this.add(this.detailLabel);
             this.add(progressRow);
 
-            this.updateTimer = new Timer(1000, new ActionListener()
+            this.updateTimer = new Timer(UPDATE_INTERVAL_MILLIS, new ActionListener()
             {
                 public void actionPerformed(ActionEvent e)
                 {
@@ -606,72 +742,83 @@ public class CoordinateCacheDialog extends JDialog
                 }
             });
             this.updateTimer.start();
+            this.updateStatus();
         }
 
         void cancel()
         {
+            if (!this.thread.isAlive())
+            {
+                return;
+            }
+
+            this.cancelled = true;
             this.thread.interrupt();
-            this.cancelButton.setText("Remove");
-            this.cancelButton.setBackground(Color.ORANGE);
+            this.updateStatus();
+        }
+
+        /** Stops this row's timer. Called before the row is dropped from the list. */
+        void dispose()
+        {
             this.updateTimer.stop();
         }
 
         protected void updateStatus()
         {
-            long current = this.thread.getProgress().getCurrentSize();
-            long total = this.thread.getProgress().getTotalSize();
             long currentCount = this.thread.getProgress().getCurrentCount();
             long totalCount = this.thread.getProgress().getTotalCount();
-
-            // Lock the original totals so the right-hand side does not shrink toward zero.
-            if (this.fixedTotalSize < 0 && total > 0)
-            {
-                this.fixedTotalSize = total;
-            }
-            if (this.fixedTotalCount < 0 && totalCount > 0)
-            {
-                this.fixedTotalCount = totalCount;
-            }
-
-            long displayTotal = this.fixedTotalSize > 0 ? this.fixedTotalSize : Math.max(total, current);
-            if (current > displayTotal)
-            {
-                displayTotal = current;
-                this.fixedTotalSize = current;
-            }
+            long currentSize = this.thread.getProgress().getCurrentSize();
+            long totalSize = this.thread.getProgress().getTotalSize();
 
             String name = this.thread.getRetrievable().getName();
-            if (name.length() > 28)
+            if (name.length() > 34)
             {
-                name = name.substring(0, 25) + "...";
+                name = name.substring(0, 31) + "...";
             }
-            // Left grows 0 → total; right stays fixed at the original total.
-            this.descriptionLabel.setText(name + " (" + SectorCacheController.makeSizeDescription(current)
-                + " / " + SectorCacheController.makeSizeDescription(displayTotal) + ")");
+            this.descriptionLabel.setText(name);
             this.descriptionLabel.setToolTipText(SectorCacheController.makeSectorDescription(this.thread.getSector()));
 
+            this.detailLabel.setText(String.format("%s  |  %,d / %,d tiles  |  %s / %s", this.targetDescription,
+                currentCount, totalCount, SectorCacheController.makeSizeDescription(currentSize),
+                SectorCacheController.makeSizeDescription(totalSize)));
+
             int percent = 0;
-            if (this.fixedTotalCount > 0)
+            if (totalCount > 0)
             {
-                percent = (int) WWMath.clamp((currentCount * 100.0) / this.fixedTotalCount, 0, 100);
+                percent = (int) WWMath.clamp((currentCount * 100.0) / totalCount, 0, 100);
             }
-            else if (displayTotal > 0)
+            else if (totalSize > 0)
             {
-                percent = (int) WWMath.clamp((current * 100.0) / displayTotal, 0, 100);
+                percent = (int) WWMath.clamp((currentSize * 100.0) / totalSize, 0, 100);
             }
 
-            this.progressBar.setValue(percent);
-            this.progressBar.setString(percent + "%");
-            this.progressBar.setForeground(new Color(0, 160, 0));
+            boolean running = this.thread.isAlive();
+            if (running)
+            {
+                this.progressBar.setValue(percent);
+                this.progressBar.setString(this.cancelled ? "Cancelling... " + percent + "%" : percent + "%");
+                return;
+            }
 
-            if (!this.thread.isAlive())
+            if (!this.finished)
+            {
+                this.finished = true;
+                this.updateTimer.stop();
+                // Nothing left to cancel; the one Clear button at the bottom takes the row away.
+                this.cancelButton.setVisible(false);
+                updateClearButton();
+            }
+
+            if (this.cancelled)
+            {
+                this.progressBar.setValue(percent);
+                this.progressBar.setString("Cancelled at " + percent + "%");
+                this.progressBar.setForeground(Color.ORANGE);
+            }
+            else
             {
                 this.progressBar.setValue(100);
                 this.progressBar.setString("Done");
-                this.progressBar.setForeground(new Color(0, 160, 0));
-                this.cancelButton.setText("Remove");
-                this.cancelButton.setBackground(Color.GREEN);
-                this.updateTimer.stop();
             }
         }
     }

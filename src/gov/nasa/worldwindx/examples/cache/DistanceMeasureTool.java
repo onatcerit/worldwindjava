@@ -27,311 +27,362 @@
  */
 package gov.nasa.worldwindx.examples.cache;
 
-import gov.nasa.worldwind.WorldWindow;
 import gov.nasa.worldwind.avlist.AVKey;
 import gov.nasa.worldwind.event.PositionEvent;
-import gov.nasa.worldwind.event.PositionListener;
-import gov.nasa.worldwind.geom.Angle;
 import gov.nasa.worldwind.geom.LatLon;
 import gov.nasa.worldwind.geom.Position;
-import gov.nasa.worldwind.layers.RenderableLayer;
-import gov.nasa.worldwind.render.AnnotationAttributes;
-import gov.nasa.worldwind.render.BasicShapeAttributes;
 import gov.nasa.worldwind.render.GlobeAnnotation;
-import gov.nasa.worldwind.render.Material;
-import gov.nasa.worldwind.render.Path;
-import gov.nasa.worldwind.render.ShapeAttributes;
-import gov.nasa.worldwindx.examples.ApplicationTemplate;
+import gov.nasa.worldwind.render.SurfacePolyline;
 
 import java.awt.*;
-import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.MouseMotionListener;
 import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Google Maps-style distance measure tool.
+ * Google Maps-style distance measuring that keeps as many measurements on the globe as the user wants.
  * <p>
- * When armed, the user presses on the globe to set a start point, then drags to stretch a line. The geodesic distance
- * from the start point is displayed in a label centered on the line and updates continuously while dragging.
+ * While armed, one measurement takes exactly two clicks:
+ * </p>
+ * <ul>
+ * <li>Click once to drop the start point. The line then follows the cursor and the label shows the distance to it,
+ * updating as the mouse is moved around to pick the end.</li>
+ * <li>Click again to close the measurement. Dragging never closes one; only a second click does.</li>
+ * <li>Between the two clicks the line is drawn faint, so it reads as provisional beside the finished measurements
+ * around it, while its distance label stays fully legible.</li>
+ * <li>The right button abandons a measurement that has only its first point down.</li>
+ * </ul>
+ * <p>
+ * The distance is the geodesic distance between the two points, as the crow flies, from Vincenty's inverse solution
+ * on the WGS84 ellipsoid. It reads only their latitudes and longitudes, so terrain relief does not enter into it. The
+ * line itself is drawn on the surface and so appears to ride over the ground between them.
+ * </p>
+ * <p>
+ * A finished measurement stays on the globe with its distance and a red delete button next to its end point. The tool
+ * remains armed, so the next measurement starts on the very next click and measurements never chain into one growing
+ * line.
  * </p>
  *
  * @author Cursor Agent
  */
-public class DistanceMeasureTool extends MouseAdapter implements MouseMotionListener, PositionListener
+public class DistanceMeasureTool extends AbstractMapTool
 {
-    protected final WorldWindow wwd;
-    protected final RenderableLayer layer;
-    protected final Path path;
-    protected final GlobeAnnotation distanceLabel;
-    protected final ShapeAttributes pathAttributes;
+    protected static final Color LINE_COLOR = new Color(30, 120, 220);
+    /** Opacity of a finished measurement's line. */
+    protected static final double FINISHED_OPACITY = 0.95;
+    /** Opacity of the line between the two clicks, faint enough to read as provisional but still plainly there. */
+    protected static final double PREVIEW_OPACITY = 0.4;
+    /** Cursor movement below this fraction of the eye altitude does not rebuild the preview. */
+    protected static final double ECHO_ALTITUDE_FRACTION = 0.0005;
 
-    protected boolean armed;
-    protected boolean dragging;
-    protected Position startPosition;
-    protected Position endPosition;
-    protected Runnable armedStateListener;
+    protected final SurfacePolyline previewLine;
+    protected final GlobeAnnotation previewLabel;
 
-    public DistanceMeasureTool(WorldWindow wwd)
+    protected final List<Position> vertices = new ArrayList<Position>();
+    protected Position rubberBandEnd;
+    protected Position pressPosition;
+    protected Point pressScreenPoint;
+    protected boolean measuring;
+    protected boolean pressStartedMeasurement;
+
+    public DistanceMeasureTool(MapOverlayManager manager)
     {
-        if (wwd == null)
-        {
-            throw new IllegalArgumentException("WorldWindow is required");
-        }
+        super(manager);
 
-        this.wwd = wwd;
+        this.previewLine = createLine(LINE_COLOR, 3, PREVIEW_OPACITY);
+        this.previewLine.setVisible(false);
 
-        this.pathAttributes = new BasicShapeAttributes();
-        this.pathAttributes.setOutlineMaterial(new Material(new Color(30, 120, 220)));
-        this.pathAttributes.setOutlineWidth(3);
-        this.pathAttributes.setOutlineOpacity(0.95);
-        this.pathAttributes.setDrawOutline(true);
-        this.pathAttributes.setDrawInterior(false);
+        this.previewLabel = new GlobeAnnotation("", Position.ZERO, createLabelAttributes(LINE_COLOR));
+        this.previewLabel.setAlwaysOnTop(true);
+        this.previewLabel.setPickEnabled(false);
+        this.previewLabel.getAttributes().setVisible(false);
 
-        this.path = new Path();
-        this.path.setAttributes(this.pathAttributes);
-        this.path.setPathType(AVKey.GREAT_CIRCLE);
-        this.path.setFollowTerrain(true);
-        this.path.setTerrainConformance(5);
-        this.path.setVisible(false);
-
-        AnnotationAttributes labelAttrs = new AnnotationAttributes();
-        labelAttrs.setFrameShape(AVKey.SHAPE_RECTANGLE);
-        labelAttrs.setInsets(new Insets(5, 8, 5, 8));
-        labelAttrs.setDrawOffset(new Point(0, 18));
-        labelAttrs.setBackgroundColor(new Color(255, 255, 255, 230));
-        labelAttrs.setTextColor(Color.BLACK);
-        labelAttrs.setBorderColor(new Color(30, 120, 220));
-        labelAttrs.setBorderWidth(1.5);
-        labelAttrs.setCornerRadius(6);
-        labelAttrs.setFont(Font.decode("Arial-BOLD-14"));
-        labelAttrs.setEffect(AVKey.TEXT_EFFECT_NONE);
-        labelAttrs.setLeader(AVKey.SHAPE_NONE);
-        labelAttrs.setAdjustWidthToText(AVKey.SIZE_FIT_TEXT);
-
-        this.distanceLabel = new GlobeAnnotation("", Position.ZERO, labelAttrs);
-        this.distanceLabel.setAlwaysOnTop(true);
-        this.distanceLabel.setPickEnabled(false);
-        this.distanceLabel.getAttributes().setVisible(false);
-
-        this.layer = new RenderableLayer();
-        this.layer.setName("Distance Measure");
-        this.layer.setPickEnabled(false);
-        this.layer.addRenderable(this.path);
-        this.layer.addRenderable(this.distanceLabel);
-        ApplicationTemplate.insertBeforeCompass(this.wwd, this.layer);
-
-        this.wwd.getInputHandler().addMouseListener(this);
-        this.wwd.getInputHandler().addMouseMotionListener(this);
-        this.wwd.addPositionListener(this);
+        this.manager.getShapeLayer().addRenderable(this.previewLine);
+        this.manager.getShapeLayer().addRenderable(this.previewLabel);
     }
 
-    public boolean isArmed()
+    /**
+     * Returns the number of finished measurements currently on the globe.
+     *
+     * @return the measurement count.
+     */
+    public int getMeasurementCount()
     {
-        return this.armed;
+        return this.manager.getOverlayCount(MapOverlay.MEASUREMENT);
     }
 
-    public void setArmedStateListener(Runnable armedStateListener)
+    /** Removes every finished measurement from the globe. */
+    public void clearMeasurements()
     {
-        this.armedStateListener = armedStateListener;
-    }
-
-    public void setArmed(boolean armed)
-    {
-        if (this.armed == armed)
-        {
-            return;
-        }
-
-        this.armed = armed;
-        this.dragging = false;
-
-        if (armed)
-        {
-            this.clearMeasurement();
-            ((Component) this.wwd).setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
-        }
-        else
-        {
-            ((Component) this.wwd).setCursor(Cursor.getDefaultCursor());
-        }
-
-        this.notifyArmedStateChanged();
-        this.wwd.redraw();
-    }
-
-    public void toggleArmed()
-    {
-        this.setArmed(!this.armed);
-    }
-
-    public void clearMeasurement()
-    {
-        this.startPosition = null;
-        this.endPosition = null;
-        this.dragging = false;
-        this.path.setVisible(false);
-        this.path.setPositions(new ArrayList<Position>());
-        this.distanceLabel.getAttributes().setVisible(false);
-        this.distanceLabel.setText("");
-        this.wwd.redraw();
-    }
-
-    public double getDistanceMeters()
-    {
-        if (this.startPosition == null || this.endPosition == null)
-        {
-            return -1;
-        }
-        return this.computeDistanceMeters(this.startPosition, this.endPosition);
+        this.manager.removeOverlays(MapOverlay.MEASUREMENT);
     }
 
     @Override
     public void mousePressed(MouseEvent e)
     {
-        if (!this.armed || e.getButton() != MouseEvent.BUTTON1 || e.isConsumed())
+        if (!this.armed || e.isConsumed() || this.isOverOverlayControl())
         {
             return;
         }
 
-        Position position = this.wwd.getCurrentPosition();
-        if (position == null)
+        if (e.getButton() == MouseEvent.BUTTON3)
+        {
+            // Right button abandons a measurement whose first point is already down.
+            if (this.measuring)
+            {
+                this.cancelInProgressWork();
+                e.consume();
+            }
+            return;
+        }
+
+        if (e.getButton() != MouseEvent.BUTTON1)
         {
             return;
         }
 
-        this.startPosition = position;
-        this.endPosition = position;
-        this.dragging = true;
-        this.updateGraphics();
+        this.pressScreenPoint = e.getPoint();
+        this.pressPosition = this.wwd.getCurrentPosition();
+
+        if (this.pressPosition != null)
+        {
+            // Start on the press, not on the release, so the line and its distance follow the cursor from the very
+            // first button-down instead of appearing only once the button comes back up.
+            this.pressStartedMeasurement = !this.measuring;
+            if (this.pressStartedMeasurement)
+            {
+                this.measuring = true;
+                this.vertices.clear();
+                this.vertices.add(this.pressPosition);
+            }
+            this.rubberBandEnd = this.pressPosition;
+            this.updatePreview();
+            this.wwd.redraw();
+        }
+
         e.consume();
     }
 
     @Override
     public void mouseDragged(MouseEvent e)
     {
-        if (!this.armed || !this.dragging || e.isConsumed())
+        if (!this.armed || !this.measuring || this.pressPosition == null || e.isConsumed())
         {
             return;
         }
 
         Position position = this.wwd.getCurrentPosition();
-        if (position == null)
+        if (position != null)
         {
-            return;
+            this.rubberBandEnd = position;
+            this.updatePreview();
         }
-
-        this.endPosition = position;
-        this.updateGraphics();
         e.consume();
     }
 
     @Override
     public void mouseReleased(MouseEvent e)
     {
-        if (!this.armed || e.getButton() != MouseEvent.BUTTON1 || e.isConsumed())
+        if (!this.armed || e.getButton() != MouseEvent.BUTTON1 || this.pressPosition == null || e.isConsumed())
         {
             return;
         }
 
-        if (this.dragging)
+        Position release = this.wwd.getCurrentPosition();
+        // Take the point where the cursor ended up, so the measurement closes exactly where the echoed line was last
+        // drawn. How far the mouse travelled while the button was down does not matter: a measurement is two clicks,
+        // never a drag.
+        Position endPoint = release != null ? release : this.pressPosition;
+
+        if (this.pressStartedMeasurement)
         {
-            Position position = this.wwd.getCurrentPosition();
-            if (position != null)
-            {
-                this.endPosition = position;
-                this.updateGraphics();
-            }
-            this.dragging = false;
-            // Keep the finished measurement visible; disarm so the next interaction can pan the globe.
-            this.setArmed(false);
-            e.consume();
+            // First click: the start point is down, now the line follows the cursor until the closing click.
+            this.rubberBandEnd = endPoint;
+            this.updatePreview();
+            this.wwd.redraw();
         }
+        else
+        {
+            // Second click closes the measurement.
+            this.addVertex(endPoint);
+            this.finishMeasurement();
+        }
+
+        this.pressPosition = null;
+        this.pressScreenPoint = null;
+        e.consume();
     }
 
     @Override
-    public void mouseMoved(MouseEvent e)
-    {
-        // Required by MouseMotionListener; unused while not dragging.
-    }
-
     public void moved(PositionEvent event)
     {
-        if (!this.armed || !this.dragging)
+        if (!this.armed || !this.measuring)
         {
             return;
         }
 
         Position position = event.getPosition();
+        if (position == null || !this.isWorthEchoing(position))
+        {
+            return;
+        }
+
+        this.rubberBandEnd = position;
+        // No redraw request here. This callback runs inside WorldWindowGLAutoDrawable.display(), so asking for a
+        // repaint would schedule another frame, whose position callback would ask again: the globe would render
+        // flat out and the terrain would visibly ripple. The mouse events that move the cursor already trigger a
+        // redraw of their own, which is what puts the updated line on screen.
+        this.updatePreview();
+    }
+
+    /**
+     * Indicates whether a new cursor position is far enough from the current rubber-band end to be worth rebuilding
+     * the preview. Sub-pixel jitter, which the terrain produces on its own as elevations settle, is ignored.
+     *
+     * @param position the candidate position.
+     *
+     * @return true when the preview should be rebuilt.
+     */
+    protected boolean isWorthEchoing(Position position)
+    {
+        if (this.rubberBandEnd == null)
+        {
+            return true;
+        }
+
+        double eyeAltitude = this.wwd.getView().getEyePosition() != null
+            ? Math.abs(this.wwd.getView().getEyePosition().getElevation()) : 0;
+        double threshold = Math.max(0.5, eyeAltitude * ECHO_ALTITUDE_FRACTION);
+        return this.computeDistanceMeters(this.rubberBandEnd, position) >= threshold;
+    }
+
+    protected void addVertex(Position position)
+    {
         if (position == null)
         {
             return;
         }
 
-        this.endPosition = position;
-        this.updateGraphics();
-    }
-
-    protected void updateGraphics()
-    {
-        if (this.startPosition == null || this.endPosition == null)
+        // A double-click delivers two press-release pairs at the same spot; do not record the point twice.
+        if (!this.vertices.isEmpty() && this.vertices.get(this.vertices.size() - 1).equals(position))
         {
-            this.path.setVisible(false);
-            this.distanceLabel.getAttributes().setVisible(false);
             return;
         }
 
-        ArrayList<Position> positions = new ArrayList<Position>(2);
-        positions.add(this.startPosition);
-        positions.add(this.endPosition);
-        this.path.setPositions(positions);
-        this.path.setVisible(true);
+        this.vertices.add(position);
+    }
 
-        double meters = this.computeDistanceMeters(this.startPosition, this.endPosition);
-        Position mid = this.computeMidPosition(this.startPosition, this.endPosition);
-        this.distanceLabel.setPosition(mid);
-        this.distanceLabel.setText(formatDistance(meters));
-        this.distanceLabel.getAttributes().setVisible(true);
+    protected void updatePreview()
+    {
+        if (!this.measuring || this.vertices.isEmpty())
+        {
+            this.previewLine.setVisible(false);
+            this.previewLabel.getAttributes().setVisible(false);
+            return;
+        }
 
+        List<Position> preview = new ArrayList<Position>(this.vertices);
+        if (this.rubberBandEnd != null && !preview.get(preview.size() - 1).equals(this.rubberBandEnd))
+        {
+            preview.add(this.rubberBandEnd);
+        }
+
+        if (preview.size() < 2)
+        {
+            this.previewLine.setVisible(false);
+            this.previewLabel.getAttributes().setVisible(false);
+            return;
+        }
+
+        this.previewLine.setLocations(new ArrayList<LatLon>(preview));
+        this.previewLine.setVisible(true);
+
+        double meters = this.computePathLengthMeters(preview);
+        this.previewLabel.setPosition(midPosition(preview.get(preview.size() - 2), preview.get(preview.size() - 1)));
+        this.previewLabel.setText(formatDistance(meters));
+        this.previewLabel.getAttributes().setVisible(true);
+    }
+
+    protected void finishMeasurement()
+    {
+        if (this.vertices.size() < 2)
+        {
+            this.cancelInProgressWork();
+            return;
+        }
+
+        List<Position> positions = new ArrayList<Position>(this.vertices);
+        double meters = this.computePathLengthMeters(positions);
+        Position last = positions.get(positions.size() - 1);
+
+        MapOverlay overlay = new MapOverlay(MapOverlay.MEASUREMENT, last);
+
+        SurfacePolyline line = createLine(LINE_COLOR, 3, FINISHED_OPACITY);
+        line.setLocations(new ArrayList<LatLon>(positions));
+        overlay.addRenderable(line);
+
+        GlobeAnnotation label = new GlobeAnnotation(formatDistance(meters),
+            midPosition(positions.get(positions.size() - 2), last), createLabelAttributes(LINE_COLOR));
+        label.setAlwaysOnTop(true);
+        label.setPickEnabled(false);
+        overlay.addRenderable(label);
+
+        overlay.setDescription(formatDistance(meters));
+        this.manager.addOverlay(overlay);
+
+        this.cancelInProgressWork();
+    }
+
+    @Override
+    protected void cancelInProgressWork()
+    {
+        this.measuring = false;
+        this.pressStartedMeasurement = false;
+        this.vertices.clear();
+        this.rubberBandEnd = null;
+        this.pressPosition = null;
+        this.pressScreenPoint = null;
+        this.previewLine.setVisible(false);
+        this.previewLine.setLocations(new ArrayList<LatLon>());
+        this.previewLabel.setText("");
+        this.previewLabel.getAttributes().setVisible(false);
         this.wwd.redraw();
     }
 
-    protected double computeDistanceMeters(Position start, Position end)
+    /**
+     * Builds the line used for measurements and drawings.
+     * <p>
+     * A surface shape is used rather than a terrain-following {@link gov.nasa.worldwind.render.Path}. A path with
+     * CLAMP_TO_GROUND and follow-terrain re-tessellates itself against the terrain every time its positions change, and
+     * the subdivision count grows as the eye descends, so echoing one under the cursor stalls rendering when zoomed in.
+     * A surface polyline is painted into the surface tiles instead: its cost is bounded by screen area, and the terrain
+     * can never hide it. WorldWind's own MeasureTool defaults to follow-terrain off for the same reason.
+     * </p>
+     *
+     * @param color line color.
+     * @param width line width in pixels.
+     *
+     * @return a line with no locations yet.
+     */
+    protected static SurfacePolyline createLine(Color color, double width)
     {
-        Angle distance = LatLon.greatCircleDistance(start, end);
-        double radius = this.wwd.getModel().getGlobe().getRadiusAt(start);
-        return distance.radians * radius;
+        return createLine(color, width, FINISHED_OPACITY);
     }
 
-    protected Position computeMidPosition(Position start, Position end)
+    /**
+     * Builds a line at a chosen opacity, so a measurement being placed can read as provisional next to the finished
+     * ones around it.
+     *
+     * @param color   line color.
+     * @param width   line width in pixels.
+     * @param opacity 0 for invisible, 1 for solid.
+     *
+     * @return a line with no locations yet.
+     */
+    protected static SurfacePolyline createLine(Color color, double width, double opacity)
     {
-        LatLon mid = LatLon.interpolateGreatCircle(0.5, start, end);
-        double elevation = 0.5 * (start.getElevation() + end.getElevation());
-        return new Position(mid, elevation);
-    }
-
-    public static String formatDistance(double meters)
-    {
-        if (meters < 0)
-        {
-            return "-";
-        }
-        if (meters < 1000)
-        {
-            return String.format("%.0f m", meters);
-        }
-        if (meters < 10000)
-        {
-            return String.format("%.2f km", meters / 1000.0);
-        }
-        return String.format("%.1f km", meters / 1000.0);
-    }
-
-    protected void notifyArmedStateChanged()
-    {
-        if (this.armedStateListener != null)
-        {
-            this.armedStateListener.run();
-        }
+        SurfacePolyline line = new SurfacePolyline(createLineAttributes(color, width, opacity));
+        line.setPathType(AVKey.GREAT_CIRCLE);
+        return line;
     }
 }

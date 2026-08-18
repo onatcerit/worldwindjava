@@ -44,9 +44,11 @@ import gov.nasa.worldwind.retrieve.BulkRetrievable;
 import gov.nasa.worldwind.retrieve.BulkRetrievalThread;
 import gov.nasa.worldwind.terrain.BasicElevationModel;
 import gov.nasa.worldwind.terrain.CompoundElevationModel;
+import gov.nasa.worldwind.util.LevelSet;
 import gov.nasa.worldwindx.examples.ApplicationTemplate;
 
 import java.awt.*;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -54,14 +56,17 @@ import java.util.List;
 /**
  * Reusable controller that downloads imagery and elevation for a geographic sector into the WorldWind cache.
  * <p>
- * Downloads are limited to cache folder names 0-14 by default (Earth/Bing/0 .. Earth/Bing/14 when available).
+ * Downloads are addressed by cache folder name and default to folders 5 through 14. Tiles land in the WorldWind file
+ * store under the layer's own cache directory, for example <code>C:\ProgramData\WorldWindData\Earth\Bing\9</code> on
+ * Windows, so a layer only ever writes into its own folder. A layer that does not publish every folder in the requested
+ * range simply writes the folders it has; {@link #describeRetrievable(BulkRetrievable)} reports what that comes out to.
  * </p>
  *
  * @author Cursor Agent
  */
 public class SectorCacheController
 {
-    public static final int DEFAULT_MIN_LEVEL = 0;
+    public static final int DEFAULT_MIN_LEVEL = 5;
     public static final int DEFAULT_MAX_LEVEL = 14;
 
     protected final WorldWindow wwd;
@@ -113,6 +118,74 @@ public class SectorCacheController
     public void setCache(FileStore cache)
     {
         this.cache = cache;
+    }
+
+    /**
+     * Returns the file store downloads are written to, which is the WorldWind data file store unless a custom cache
+     * directory was chosen.
+     *
+     * @return the effective file store; never null.
+     */
+    public FileStore getEffectiveCache()
+    {
+        return this.cache != null ? this.cache : WorldWind.getDataFileStore();
+    }
+
+    /**
+     * Returns the directory tiles are written into. On Windows the default is
+     * <code>%ALLUSERSPROFILE%\WorldWindData</code>, that is <code>C:\ProgramData\WorldWindData</code>.
+     *
+     * @return the absolute path of the file store's write location, or a placeholder when there is none.
+     */
+    public String getCacheWriteLocation()
+    {
+        File location = this.getEffectiveCache().getWriteLocation();
+        return location != null ? location.getAbsolutePath() : "(no writable cache location)";
+    }
+
+    /**
+     * Describes where a data source will be cached and which zoom folders the current level range resolves to, for
+     * example <code>Earth/Bing - zoom folders 5-9 (available 0-9)</code>.
+     *
+     * @param retrievable the data source to describe.
+     *
+     * @return a one line description for the download dialog.
+     */
+    public String describeRetrievable(BulkRetrievable retrievable)
+    {
+        LevelSet levels = levelsOf(retrievable);
+        if (levels == null)
+        {
+            return "cached by the layer's own bulk downloader";
+        }
+
+        String cachePath = levels.getFirstLevel() != null ? levels.getFirstLevel().getCacheName() : "?";
+        int[] effective = CacheLevels.effectiveFolderRange(levels, this.minLevel, this.maxLevel);
+        int available = CacheLevels.minAvailableFolder(levels);
+        int availableMax = CacheLevels.maxAvailableFolder(levels);
+
+        return String.format("%s - zoom folders %s (available %d-%d)", cachePath,
+            CacheLevels.describeFolderRange(effective), available, availableMax);
+    }
+
+    /**
+     * Returns the level set backing a data source, when it has one.
+     *
+     * @param retrievable the data source to inspect.
+     *
+     * @return the level set, or null for sources that are not tiled image layers or basic elevation models.
+     */
+    protected static LevelSet levelsOf(BulkRetrievable retrievable)
+    {
+        if (retrievable instanceof BasicTiledImageLayer)
+        {
+            return ((BasicTiledImageLayer) retrievable).getLevels();
+        }
+        if (retrievable instanceof BasicElevationModel)
+        {
+            return ((BasicElevationModel) retrievable).getLevels();
+        }
+        return null;
     }
 
     public int getMinLevel()
@@ -201,7 +274,7 @@ public class SectorCacheController
 
         try
         {
-            FileStore fileStore = this.cache != null ? this.cache : WorldWind.getDataFileStore();
+            FileStore fileStore = this.getEffectiveCache();
             if (retrievable instanceof BasicTiledImageLayer)
             {
                 LevelRangeTiledImageBulkDownloader downloader = new LevelRangeTiledImageBulkDownloader(
@@ -215,8 +288,8 @@ public class SectorCacheController
                 return downloader.estimateMissingDataSizeBytes();
             }
 
-            // Fallback: use finest available level within maxLevel when possible.
-            return retrievable.getEstimatedMissingDataSize(sector, 0, this.cache);
+            // Sources that are neither tiled image layers nor basic elevation models estimate their own full extent.
+            return retrievable.getEstimatedMissingDataSize(sector, 0, fileStore);
         }
         catch (Exception e)
         {
@@ -233,7 +306,7 @@ public class SectorCacheController
             return threads;
         }
 
-        FileStore fileStore = this.cache != null ? this.cache : WorldWind.getDataFileStore();
+        FileStore fileStore = this.getEffectiveCache();
 
         for (BulkRetrievable retrievable : retrievables)
         {
@@ -265,7 +338,7 @@ public class SectorCacheController
             }
             else
             {
-                thread = retrievable.makeLocal(sector, 0, this.cache, listener);
+                thread = retrievable.makeLocal(sector, 0, fileStore, listener);
             }
 
             if (thread != null)
